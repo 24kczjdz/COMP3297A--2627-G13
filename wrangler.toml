@@ -1,0 +1,20 @@
+name = "leaveflowse"
+main = "src/worker/index.ts"
+compatibility_date = "2026-10-01"
+workers_dev = true
+
+[assets]
+directory = "./dist/client"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+run_worker_first = true
+
+[dev]
+port = 43219
+ip = "0.0.0.0"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "leaveflowse"
+database_id = "f518dcd2-11cb-4ad3-b525-04a128c67739"
+migrations_dir = "migrations"
