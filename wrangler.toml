@@ -16,5 +16,5 @@ ip = "0.0.0.0"
 [[d1_databases]]
 binding = "DB"
 database_name = "leaveflowse"
-database_id = "f518dcd2-11cb-4ad3-b525-04a128c67739"
+database_id = "b5b9ae5a-c227-47ed-829a-841c2d24dacd"
 migrations_dir = "migrations"

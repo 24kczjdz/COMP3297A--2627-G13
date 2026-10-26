@@ -60,7 +60,7 @@ npx wrangler deploy
 
 The production session cookie is marked `Secure` on HTTPS.
 
-The app is deployed at [https://leaveflowse.balsam-ocelot.workers.dev](https://leaveflowse.balsam-ocelot.workers.dev). The D1 database id in `wrangler.toml` is the remote database `leaveflowse` in region APAC. That deployment uses a temporary Cloudflare preview account. Claim it from the Cloudflare dashboard before it expires, or sign in with `npx wrangler login` and deploy again into the course account. Opening the site in a browser may show Cloudflare’s “Just a moment” check before the sign-in page.
+The app is deployed at [https://leaveflowse.slender-gray.workers.dev](https://leaveflowse.slender-gray.workers.dev). The D1 database id in `wrangler.toml` is the remote database `leaveflowse` in region APAC. That deployment uses a temporary Cloudflare preview account. Claim it from the Cloudflare dashboard before it expires, or sign in with `npx wrangler login` and deploy again into your own account. Opening the site in a browser may show Cloudflare’s “Just a moment” check before the sign-in page.
 
 ## Checks
 
