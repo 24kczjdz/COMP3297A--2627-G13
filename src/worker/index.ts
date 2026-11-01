@@ -1,8 +1,7 @@
 import { Hono } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
-import { ANNUAL_QUOTA, SESSION_DAYS, SICK_QUOTA } from "../shared/constants";
+import { SESSION_DAYS } from "../shared/constants";
 import { hongKongToday, isIsoDate } from "../shared/dates";
-import { decisionMessage } from "../shared/messages";
 import { assertCanModify, cancelRefusal, decide, nextStatusAfterCancel } from "../shared/stateMachine";
 import type { LeaveRecord, LeaveStatus, LeaveType, Me, Notice, Role, StaffAccount } from "../shared/types";
 import {
@@ -50,6 +49,9 @@ type LeaveRow = {
   decided_at: string | null;
   cancelled_at: string | null;
   updated_at: string;
+  decision_comment: string;
+  decided_by: string | null;
+  revision: number;
 };
 
 type NoticeRow = {
@@ -69,13 +71,37 @@ const COOKIE = "leaveflowse_session";
 const LEAVE_COLUMNS = `
   a.id, a.applicant_id, s.name AS applicant_name, s.staff_code AS applicant_staff_code,
   a.leave_type, a.start_date, a.end_date, a.day_count, a.reason, a.status, a.archived,
-  a.submitted_at, a.decided_at, a.cancelled_at, a.updated_at
+  a.submitted_at, a.decided_at, a.cancelled_at, a.updated_at,
+  a.decision_comment, a.decided_by, a.revision
 `;
 
 const app = new Hono<{ Bindings: Env; Variables: Variables }>();
 const api = new Hono<{ Bindings: Env; Variables: Variables }>();
 
 api.onError((error, c) => {
+  // Trigger errors are stable codes, not raw SQL or database internals.
+  const messages: Record<string, string> = {
+    "leave:dates": "Enter valid dates and an inclusive whole-day length.",
+    "leave:reason": "A reason is required for leave longer than 4 days (maximum 500 characters).",
+    "leave:annual_notice": "Annual leave must start at least 2 calendar days from today.",
+    "leave:sick_backdate": "The last date of sick leave cannot be more than 7 days ago.",
+    "leave:overlap": "This request overlaps your pending or approved leave.",
+    "leave:balance": "This request exceeds your remaining balance in at least one calendar year.",
+    "leave:transition": "This request can no longer be changed or cancelled.",
+    "leave:edit_pending": "Only a Pending application can be edited.",
+    "leave:decision_comment": "An approver comment is required for leave longer than 4 days.",
+    "staff:company_email": companyEmailError(),
+  };
+  const details = `${error.message} ${error.cause instanceof Error ? error.cause.message : ""}`;
+  for (const [code, message] of Object.entries(messages)) {
+    if (details.includes(code)) return c.json({ error: message }, 400);
+  }
+  if (details.includes("UNIQUE constraint failed: staff.email") || details.includes("idx_staff_email_normalized")) {
+    return c.json({ error: "An account with that email already exists." }, 409);
+  }
+  if (details.includes("UNIQUE constraint failed: staff.staff_code")) {
+    return c.json({ error: "That staff ID is already in use." }, 409);
+  }
   console.error(error);
   return c.json({ error: "LeaveFlowSE could not complete that action." }, 500);
 });
@@ -213,10 +239,11 @@ api.patch("/applications/:id", async (c) => {
   const parsed = validateLeaveInput(await readJson(c));
   if (!parsed.ok) return c.json({ error: parsed.error }, 400);
   const now = new Date().toISOString();
-  await c.env.DB.prepare(
+  const result = await c.env.DB.prepare(
     `UPDATE leave_application
-     SET leave_type = ?, start_date = ?, end_date = ?, day_count = ?, reason = ?, status = 'Pending', archived = 0, updated_at = ?
-     WHERE id = ? AND applicant_id = ? AND status = 'Pending'`,
+     SET leave_type = ?, start_date = ?, end_date = ?, day_count = ?, reason = ?, status = 'Pending', archived = 0,
+         updated_at = ?, revision = revision + 1
+     WHERE id = ? AND applicant_id = ? AND status = 'Pending' AND revision = ?`,
   )
     .bind(
       parsed.value.leaveType,
@@ -227,8 +254,10 @@ api.patch("/applications/:id", async (c) => {
       now,
       existing.id,
       staff.id,
+      existing.revision,
     )
     .run();
+  if (result.meta.changes === 0) return c.json({ error: "The request changed. Reload it and try again." }, 409);
   const row = await ownApplication(c.env.DB, staff.id, existing.id);
   return c.json(toLeave(row!));
 });
@@ -241,13 +270,14 @@ api.post("/applications/:id/cancel", async (c) => {
   const refusal = cancelRefusal(existing.status, existing.start_date, today);
   if (refusal) return c.json({ error: refusal }, 400);
   const now = new Date().toISOString();
-  await c.env.DB.prepare(
+  const result = await c.env.DB.prepare(
     `UPDATE leave_application
-     SET status = ?, archived = 0, cancelled_at = ?, updated_at = ?
-     WHERE id = ? AND applicant_id = ?`,
+     SET status = ?, archived = 0, cancelled_at = ?, updated_at = ?, revision = revision + 1
+     WHERE id = ? AND applicant_id = ? AND status = ? AND revision = ?`,
   )
-    .bind(nextStatusAfterCancel(), now, now, existing.id, staff.id)
+    .bind(nextStatusAfterCancel(), now, now, existing.id, staff.id, existing.status, existing.revision)
     .run();
+  if (result.meta.changes === 0) return c.json({ error: "The request changed. Reload it and try again." }, 409);
   const row = await ownApplication(c.env.DB, staff.id, existing.id);
   return c.json(toLeave(row!));
 });
@@ -377,7 +407,7 @@ api.get("/approver/pending", async (c) => {
     `SELECT ${LEAVE_COLUMNS}
      FROM leave_application a JOIN staff s ON s.id = a.applicant_id
      WHERE a.status = 'Pending'
-     ORDER BY a.submitted_at ASC, a.id ASC`,
+     ORDER BY a.start_date ASC, a.submitted_at ASC, a.id ASC`,
   ).all<LeaveRow>();
   const applications = (rows.results ?? []).map(toLeave);
   return c.json({ count: applications.length, applications });
@@ -393,27 +423,26 @@ api.post("/approver/applications/:id/decision", async (c) => {
   if (!existing) return c.json({ error: "That application was not found." }, 404);
   const outcome = decide(existing.status, decision);
   if (!outcome.ok) return c.json({ error: outcome.error }, 400);
+  const rawComment = body?.comment ?? "";
+  if (typeof rawComment !== "string" || rawComment.trim().length > 1000 || /[\u0000-\u001F]/.test(rawComment)) {
+    return c.json({ error: "Use a comment of 1000 characters or fewer." }, 400);
+  }
+  const comment = rawComment.trim();
+  if (existing.day_count > 4 && !comment) {
+    return c.json({ error: "An approver comment is required for leave longer than 4 days." }, 400);
+  }
   const now = new Date().toISOString();
-  await c.env.DB.prepare(
+  const result = await c.env.DB.prepare(
     `UPDATE leave_application
-     SET status = ?, archived = 1, decided_at = ?, updated_at = ?
-     WHERE id = ? AND status = 'Pending'`,
+     SET status = ?, archived = 1, decided_at = ?, updated_at = ?, decision_comment = ?, decided_by = ?,
+         revision = revision + 1
+     WHERE id = ? AND status = 'Pending' AND revision = ?`,
   )
-    .bind(outcome.status, now, now, existing.id)
+    .bind(outcome.status, now, now, comment, c.get("staff").id, existing.id, existing.revision)
     .run();
-  await c.env.DB.prepare(
-    `INSERT INTO notification (id, recipient_id, application_id, kind, message, created_at, read_at)
-     VALUES (?, ?, ?, ?, ?, ?, NULL)`,
-  )
-    .bind(
-      crypto.randomUUID(),
-      existing.applicant_id,
-      existing.id,
-      outcome.kind,
-      decisionMessage(existing.leave_type, existing.start_date, existing.end_date, existing.day_count, outcome.kind),
-      now,
-    )
-    .run();
+  // D1 includes the notification trigger's insert in meta.changes.
+  if (result.meta.changes === 0) return c.json({ error: "The request changed. Reload it and try again." }, 409);
+  // SQL creates the notification atomically with the decision.
   const row = await applicationById(c.env.DB, existing.id);
   return c.json(toLeave(row!));
 });
@@ -463,21 +492,21 @@ async function readJson(c: { req: { json: () => Promise<unknown> } }): Promise<R
 }
 
 async function buildMe(db: D1Database, staff: StaffRow): Promise<Me> {
-  const spentRows = await db
+  const today = hongKongToday();
+  const year = Number(today.slice(0, 4));
+  const balances = await db
     .prepare(
-      `SELECT leave_type, COALESCE(SUM(day_count), 0) AS spent
-       FROM leave_application
-       WHERE applicant_id = ? AND status = 'Approved'
-       GROUP BY leave_type`,
+      `SELECT leave_type, entitlement, pending_days, approved_days, taken_days, remaining
+       FROM leave_balance WHERE staff_id = ? AND calendar_year = ?`,
     )
-    .bind(staff.id)
-    .all<{ leave_type: LeaveType; spent: number }>();
-  let annualSpent = 0;
-  let sickSpent = 0;
-  for (const row of spentRows.results ?? []) {
-    if (row.leave_type === "annual") annualSpent = Number(row.spent);
-    if (row.leave_type === "sick") sickSpent = Number(row.spent);
-  }
+    .bind(staff.id, year)
+    .all<{ leave_type: LeaveType; entitlement: number; pending_days: number; approved_days: number; taken_days: number; remaining: number }>();
+  const side = (type: LeaveType) => {
+    const row = balances.results.find((item) => item.leave_type === type);
+    if (!row) throw new Error("Missing calendar-year leave balance; apply database migrations.");
+    return { entitlement: row.entitlement, spent: row.approved_days, pending: row.pending_days,
+      taken: row.taken_days, remaining: row.remaining };
+  };
   const unread = await db
     .prepare("SELECT COUNT(*) AS count FROM notification WHERE recipient_id = ? AND read_at IS NULL")
     .bind(staff.id)
@@ -499,12 +528,13 @@ async function buildMe(db: D1Database, staff: StaffRow): Promise<Me> {
     yearJoined: Number(staff.year_joined),
     role: staff.role,
     quota: {
-      annual: { entitlement: ANNUAL_QUOTA, spent: annualSpent },
-      sick: { entitlement: SICK_QUOTA, spent: sickSpent },
+      annual: side("annual"),
+      sick: side("sick"),
     },
     unreadNotifications: Number(unread?.count ?? 0),
     pendingCount,
-    hongKongToday: hongKongToday(),
+    hongKongToday: today,
+    quotaYear: year,
   };
 }
 
@@ -561,6 +591,9 @@ function toLeave(row: LeaveRow): LeaveRecord {
     decidedAt: row.decided_at,
     cancelledAt: row.cancelled_at,
     updatedAt: row.updated_at,
+    decisionComment: row.decision_comment,
+    decidedBy: row.decided_by,
+    revision: Number(row.revision),
   };
 }
 

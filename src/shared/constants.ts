@@ -1,7 +1,5 @@
-/** Single source for the company domain and leave entitlements. */
+/** Authentication constants. Leave entitlements are defined by SQL views/rules. */
 export const COMPANY_DOMAIN = "worksmartse.hk";
-export const ANNUAL_QUOTA = 18;
-export const SICK_QUOTA = 14;
 export const PBKDF2_ITERATIONS = 100_000;
 export const SESSION_DAYS = 7;
 

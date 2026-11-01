@@ -1,5 +1,9 @@
 # LeaveFlowSE — raw requirements
 
+> Historical elicitation note. The current group-specific requirements in
+> [REQUIREMENTS.md](REQUIREMENTS.md) supersede this note, especially yearly balances,
+> pending reservations, date/overlap/quota validation, and long-leave reasons/comments.
+
 Sources: the COMP3297A project specification for WorkSmartSE, and the Group 13 requirements note (Wang Lijia). The note’s staff-feature list has two handwritten marks, and both are kept below: “View own application histories” is marked **+ status**, and the in-system notification line is marked **derived**.
 
 WorkSmartSE is a Hong Kong company of about 40 staff. Leave is handled today with paper forms and WhatsApp, then recorded in a spreadsheet. One approver checks every application. LeaveFlowSE is the web application that replaces that process: staff apply for leave, the approver decides, and leave records can be looked up by date.

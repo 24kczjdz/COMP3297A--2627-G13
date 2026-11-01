@@ -1,47 +1,60 @@
-# LeaveFlowSE acceptance checklist
+# Validation report - Group 13 database upgrade
 
-Checked against the local Worker on http://127.0.0.1:43219 by `npm run acceptance` (scripts/acceptance.mjs), then walked in the browser as Oscar Lam and as Mira Cheung, including a phone-width layout. The local database was reset to the demo seed after those runs, so the app you open still has the original sample requests.
+Validated locally on 1 November 2026 against base commit
+`1db7c0dac08e74433010a148184db806504791e8` and the changes in this package.
+The remote Cloudflare database and deployed application were not modified.
 
-- [x] Sign-in succeeds when the email and password match an account the approver created.
-- [x] The email is a @worksmartse.hk address. Any other domain is refused, and there is no self-registration.
-- [x] After sign-in, a staff member reaches their own profile, quota, balance, and applications. The approver signs in the same way and also reaches the approver screens.
-- [x] The profile shows email, name, staff ID, birthday, department, and year joined.
-- [x] The signed-in person sees their own profile.
-- [x] The approver sees their own profile through that same screen.
-- [x] Each person has 18 days of annual leave and 14 days of sick leave.
-- [x] Totals and spent amounts are whole days.
-- [x] The entitlement and the days already spent are both visible, separately, for each leave type.
-- [x] The approver sees the same balance figures on their own staff home.
-- [x] History lists only applications submitted by the signed-in person.
-- [x] Each entry shows leave type, start date, end date, reason, and status.
-- [x] Status is one of Pending, Approved, Disapproved, Cancelled.
-- [x] The form takes leave type (annual or sick), start date, end date, and reason.
-- [x] The stored length is the inclusive calendar-day count, and one quota unit is one day. A same-day request is 1 day.
-- [x] The new application is Pending and appears in the applicant’s history.
-- [x] While Pending, the applicant can change type, start date, end date, and reason.
-- [x] After the change the status is still Pending and the history shows the updated content.
-- [x] Modification is available only while the status is Pending.
-- [x] The applicant can cancel a Pending application at any time. The status becomes Cancelled.
-- [x] The applicant can cancel an Approved application on any Hong Kong date up to and including the day before the start date. The status becomes Cancelled, and those days leave the spent balance.
-- [x] Approved leave whose start date is already today or earlier cannot be cancelled.
-- [x] Approving writes an in-system notification for the applicant.
-- [x] Disapproving writes an in-system notification for the applicant.
-- [x] The applicant can read that notification after signing in. Opening the list marks it read.
-- [x] The approver sets the email and the initial password. The password is returned once and is not on the profile.
-- [x] An email outside @worksmartse.hk is refused.
-- [x] The new person can sign in with that email and password. New accounts are staff, so there is still one approver.
-- [x] The approver can update email, name, staff ID, birthday, department, and year joined.
-- [x] The staff member sees those updated details on their own profile.
-- [x] A staff role has no way to edit a profile. The approver routes respond with a refusal.
-- [x] The pending screen shows the number of Pending applications.
-- [x] Each row shows the staff member, leave type, start date, end date, and reason.
-- [x] The queue is the applications the approver has not yet decided.
-- [x] Approve and Disapprove are available on Pending applications.
-- [x] Approve sets Approved. Disapprove sets Disapproved.
-- [x] Those two outcomes are archived. The approver can decide their own Pending application.
-- [x] A chosen date returns applications from all staff whose start-to-end period covers that date.
-- [x] The submission day does not select the row.
-- [x] Each row shows the staff member, leave type, start date, end date, reason, and status.
-- [x] On HTTP, the session cookie is HttpOnly and SameSite=Lax, and it is not marked Secure. The Worker sets Secure when the request URL is HTTPS.
+## Automated checks
 
-Production deploy was not completed in this environment: `wrangler whoami` reported that Wrangler is not authenticated, and there was no Cloudflare API token to create the remote D1 database.
+| Check | Outcome | Scope |
+| --- | --- | --- |
+| `python scripts/test-database.py` | 25 tests pass | Actual migrations applied to fresh in-memory SQLite databases with foreign keys enabled |
+| `npm run typecheck` | Pass | Client, Worker and shared TypeScript |
+| `npm run build` | Pass | Vite production client build |
+| Wrangler local D1 migrations | Pass | All three migrations execute successfully in local D1 |
+| `npm run acceptance` | 90 counted assertions pass | HTTP API against the local Worker/D1; additional assertions check cookies, notices, ownership and reports |
+
+Verification used Node 24, Python 3, Vite 6.4.5 and Wrangler 4.156.0.
+The environment provided pnpm; `pnpm import` / frozen install confirmed the existing
+`package-lock.json` resolutions, with no dependency manifest/lockfile changes.
+Standard npm commands above are their repository equivalents.
+
+## Requirement coverage
+
+1. Accounts: company-domain restriction, incorrect-password refusal, unique email,
+   approver-only creation/profile edits, assigned initial password, staff role on
+   creation, hidden password fields, session invalidation on logout.
+2. Profile/dashboard: personal fields, current-year 18/14 entitlements, pending
+   reservations, remaining balances, elapsed approved sick days, pending count.
+3. Applications: inclusive whole days, optional short-request reasons, >4-day
+   reasons, 2-day annual notice, 7-day sick end-date backdating, pending/approved
+   overlap prevention across types, same rules on edits, and yearly quota limits.
+4. Lifecycle: edits replace their old reservation; pending cancellation and
+   rejection restore balance; approval does not deduct twice; approved future
+   cancellation restores balance; started approved leave cannot be cancelled.
+5. Decisions: both outcomes require a comment for >4 days, store actor/comment,
+   create one notice, and preserve final decisions. Injected notification failure
+   rolls back the decision in the database test.
+6. Reports: queue sorted by start date; date search includes all statuses based on
+   leave dates; ordinary staff cannot open another staff member's application.
+7. Calendar boundaries: cross-year requests allocate days to both years and must
+   fit both balances; no future days are counted as taken; same-day leave is one day.
+8. Concurrency: two simultaneous 10-day nonoverlapping annual requests cannot both
+   reserve a quota of 18. Two concurrent decisions yield one success and one
+   refusal/conflict, with exactly one notification. Stale revisions cannot overwrite.
+9. Upgrade: original 40 staff, eight requests and three notices survive migration;
+   foreign keys remain valid; maintenance/report SQL is read-only.
+
+## Reproduce and limits
+
+Follow [database/README.md](database/README.md) to create an isolated local D1
+directory and start the Worker. API tests create uniquely named staff and history;
+they refuse non-local hosts. They do not depend on fixed sample request counts.
+
+The PDF provides general project context; [REQUIREMENTS.md](REQUIREMENTS.md) records
+the user's current six requirement groups and the cross-year/taken-day interpretations.
+Existing historical data is not rewritten to satisfy new submission-time rules.
+Use `database/preflight.sql` on the real database and review conflicts before upgrade.
+
+This is local automated validation, not a production migration or a full browser/
+accessibility audit. No claim is made about the current remote dataset's integrity.
