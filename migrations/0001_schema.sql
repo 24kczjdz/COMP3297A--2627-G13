@@ -12,6 +12,7 @@ CREATE TABLE staff (
   created_at TEXT NOT NULL
 );
 
+
 CREATE TABLE leave_application (
   id TEXT PRIMARY KEY,
   applicant_id TEXT NOT NULL,
