@@ -48,9 +48,14 @@ export function validateLeaveInput(
   if (endDate < startDate) {
     return { ok: false, error: "The end date is before the start date." };
   }
-  const reason = cleanText(record.reason, 500);
-  if (!reason) {
-    return { ok: false, error: "Enter the reason for this leave, in 500 characters or fewer." };
+  const rawReason = record.reason ?? "";
+  if (typeof rawReason !== "string" || rawReason.trim().length > 500 || /[\u0000-\u001F]/.test(rawReason)) {
+    return { ok: false, error: "Use a reason of 500 characters or fewer." };
+  }
+  const reason = rawReason.trim().replace(/\s+/g, " ");
+  const days = dayCount(startDate, endDate);
+  if (days > 4 && !reason) {
+    return { ok: false, error: "A reason is required for leave longer than 4 days." };
   }
   return {
     ok: true,
@@ -59,7 +64,7 @@ export function validateLeaveInput(
       startDate,
       endDate,
       reason,
-      dayCount: dayCount(startDate, endDate),
+      dayCount: days,
     },
   };
 }

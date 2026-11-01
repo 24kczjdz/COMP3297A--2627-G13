@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { formatLongDate } from "../../shared/dates";
 import type { LeaveRecord } from "../../shared/types";
 import { ApiError, decideApplication, getPending } from "../api";
-import { daysLabel, EmptyNote, ErrorNote, leaveLabel, LoadingNote, PageTitle, PrimaryButton, DangerButton, StatusBadge } from "../components";
+import { daysLabel, EmptyNote, ErrorNote, Field, leaveLabel, LoadingNote, PageTitle, PrimaryButton, DangerButton, StatusBadge, TextArea } from "../components";
 import { useTitle } from "../useTitle";
 
 export function Pending() {
@@ -11,6 +11,7 @@ export function Pending() {
   const [records, setRecords] = useState<LeaveRecord[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [comments, setComments] = useState<Record<string, string>>({});
 
   const load = useCallback(async () => {
     setError(null);
@@ -31,7 +32,7 @@ export function Pending() {
     setBusyId(id);
     setError(null);
     try {
-      await decideApplication(id, decision);
+      await decideApplication(id, decision, comments[id] ?? "");
       await load();
     } catch (caught) {
       setError(caught instanceof ApiError ? caught.message : "That decision could not be saved.");
@@ -44,7 +45,7 @@ export function Pending() {
     <div>
       <PageTitle
         title="Pending applications"
-        lede="Approve or disapprove only requests that are still pending. Each decision is archived and posted to the applicant."
+        lede="Requests are sorted by start date. A comment is required for leave longer than 4 days. Each decision is posted to the applicant."
       />
       {count !== null ? (
         <p className="mb-4 text-lg text-stone-700">
@@ -75,6 +76,12 @@ export function Pending() {
               <StatusBadge status={record.status} />
             </div>
             <p className="mt-3 text-sm">{record.reason}</p>
+            <div className="mt-3">
+              <Field label={`Comment (${record.dayCount > 4 ? "required" : "optional"})`}>
+                <TextArea maxLength={1000} value={comments[record.id] ?? ""}
+                  onChange={(event) => setComments((previous) => ({ ...previous, [record.id]: event.target.value }))} />
+              </Field>
+            </div>
             <div className="mt-4 flex flex-wrap gap-2">
               <PrimaryButton type="button" disabled={busyId === record.id} onClick={() => void decide(record.id, "approve")}>
                 Approve

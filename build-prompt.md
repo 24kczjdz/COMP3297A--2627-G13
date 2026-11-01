@@ -1,5 +1,8 @@
 # Build prompt — LeaveFlowSE
 
+> Historical prompt. [REQUIREMENTS.md](REQUIREMENTS.md) supersedes its business rules.
+> Do not use the original balance or submission rules below to regenerate the app.
+
 Copy everything below the line into a coding agent. Build only what it asks for.
 
 ---

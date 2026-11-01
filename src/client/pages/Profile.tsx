@@ -12,6 +12,8 @@ export function Profile({ me }: { me: Me }) {
     ["Birthday", formatLongDate(me.birthday)],
     ["Department", me.department],
     ["Year joined", String(me.yearJoined)],
+    [`Annual leave quota (${me.quotaYear})`, `${me.quota.annual.entitlement} days`],
+    [`Sick leave quota (${me.quotaYear})`, `${me.quota.sick.entitlement} days`],
   ];
   return (
     <div>

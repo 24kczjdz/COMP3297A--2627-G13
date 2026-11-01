@@ -90,8 +90,10 @@ export function ApplicationForm({ mode }: { mode: "new" | "edit" }) {
             </Field>
           </div>
           <p className="rounded-md bg-paper px-3 py-2 text-sm">{preview}</p>
-          <Field label="Reason">
-            <TextArea required value={reason} onChange={(event) => setReason(event.target.value)} />
+          <p className="text-sm text-stone-600">Annual leave needs 2 days' notice. Sick leave may end up to 7 days ago. Pending and approved leave reserve your yearly balance.</p>
+          <Field label="Reason (required for more than 4 days)">
+            <TextArea required={isIsoDate(startDate) && isIsoDate(endDate) && dayCount(startDate, endDate) > 4}
+              maxLength={500} value={reason} onChange={(event) => setReason(event.target.value)} />
           </Field>
           <div className="flex items-center gap-4">
             <PrimaryButton type="submit" disabled={pending}>

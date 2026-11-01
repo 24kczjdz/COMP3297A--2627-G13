@@ -49,10 +49,10 @@ export const updateStaff = (id: string, body: unknown) =>
 
 export const getPending = () =>
   api<{ count: number; applications: LeaveRecord[] }>("/api/approver/pending");
-export const decideApplication = (id: string, decision: "approve" | "disapprove") =>
+export const decideApplication = (id: string, decision: "approve" | "disapprove", comment = "") =>
   api<LeaveRecord>(`/api/approver/applications/${id}/decision`, {
     method: "POST",
-    body: JSON.stringify({ decision }),
+    body: JSON.stringify({ decision, comment }),
   });
 export const getOnDate = (date: string) =>
   api<{ date: string; applications: LeaveRecord[] }>(`/api/approver/on-date?date=${encodeURIComponent(date)}`);

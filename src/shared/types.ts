@@ -5,6 +5,9 @@ export type LeaveStatus = "Pending" | "Approved" | "Disapproved" | "Cancelled";
 export type QuotaSide = {
   entitlement: number;
   spent: number;
+  pending: number;
+  remaining: number;
+  taken: number;
 };
 
 export type Me = {
@@ -23,6 +26,7 @@ export type Me = {
   unreadNotifications: number;
   pendingCount: number | null;
   hongKongToday: string;
+  quotaYear: number;
 };
 
 export type LeaveRecord = {
@@ -41,6 +45,9 @@ export type LeaveRecord = {
   decidedAt: string | null;
   cancelledAt: string | null;
   updatedAt: string;
+  decisionComment: string;
+  decidedBy: string | null;
+  revision: number;
 };
 
 export type Notice = {
