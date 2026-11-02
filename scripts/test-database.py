@@ -30,10 +30,10 @@ class DatabaseRules(unittest.TestCase):
     def request(self, id='test', start=FUTURE, days=1, type='annual', reason=''):
         end = start + timedelta(days=days - 1)
         self.db.execute("""INSERT INTO leave_application
-          (id, applicant_id, leave_type, start_date, end_date, day_count, reason,
+          (id, applicant_id, leave_type, start_date, end_date, reason,
            status, archived, submitted_at, updated_at)
-          VALUES (?, 'test-staff', ?, ?, ?, ?, ?, 'Pending', 0, 'now', 'now')""",
-          (id, type, str(start), str(end), days, reason))
+          VALUES (?, 'test-staff', ?, ?, ?, ?, 'Pending', 0, 'now', 'now')""",
+          (id, type, str(start), str(end), reason))
 
     def update(self, id='test', **fields):
         fields['revision'] = self.db.execute('SELECT revision + 1 FROM leave_application WHERE id = ?', (id,)).fetchone()[0]
@@ -57,6 +57,19 @@ class DatabaseRules(unittest.TestCase):
         self.assertEqual(self.db.execute('SELECT COUNT(*) FROM leave_application').fetchone()[0], 8)
         self.assertEqual(self.db.execute('SELECT COUNT(*) FROM notification').fetchone()[0], 3)
         self.assertEqual(self.db.execute('PRAGMA foreign_key_check').fetchall(), [])
+
+    def test_duration_migration_preserves_every_other_field(self):
+        with sqlite3.connect(':memory:') as original:
+            original.execute('PRAGMA foreign_keys = ON')
+            for path in sorted((ROOT / 'migrations').glob('000[123]_*.sql')):
+                original.executescript(path.read_text(encoding='utf-8'))
+            for table in ['staff', 'leave_application', 'notification', 'session']:
+                columns = [row[1] for row in original.execute(f'PRAGMA table_info({table})')
+                           if row[1] != 'day_count']
+                query = f'SELECT {", ".join(columns)} FROM {table} ORDER BY id'
+                before = original.execute(query).fetchall()
+                after = [tuple(row) for row in self.db.execute(query) if row['id'] != 'test-staff']
+                self.assertEqual(after, before)
 
     def test_maintenance_queries_are_read_only(self):
         changes = self.db.total_changes
@@ -96,14 +109,15 @@ class DatabaseRules(unittest.TestCase):
 
     def test_edit_replaces_old_reservation(self):
         self.request(days=4)
-        self.update(end_date=str(FUTURE + timedelta(days=5)), day_count=6, reason='Extended leave')
+        self.update(end_date=str(FUTURE + timedelta(days=5)), reason='Extended leave')
         self.assertEqual(self.balance()['remaining'], 12)
         self.update(leave_type='sick')
         self.assertEqual(self.balance()['remaining'], 18)
         self.assertEqual(self.balance(type='sick')['remaining'], 8)
 
     def test_annual_notice_boundary(self):
-        self.rejects('leave:annual_notice', lambda: self.request(start=TODAY + timedelta(days=1)))
+        for offset in [-27, -1, 0, 1]:
+            self.rejects('leave:annual_notice', lambda: self.request(start=TODAY + timedelta(days=offset)))
         self.request(start=TODAY + timedelta(days=2))
 
     def test_sick_backdate_uses_last_date(self):
@@ -120,6 +134,7 @@ class DatabaseRules(unittest.TestCase):
 
     def test_overlap_across_types_and_inclusive_endpoints(self):
         self.request(days=2)
+        self.rejects('leave:overlap', lambda: self.request('annual-overlap', FUTURE + timedelta(days=1)))
         self.rejects('leave:overlap', lambda: self.request('overlap', FUTURE + timedelta(days=1), type='sick'))
         self.request('adjacent', FUTURE + timedelta(days=2))
 
@@ -138,8 +153,8 @@ class DatabaseRules(unittest.TestCase):
 
     def test_edit_uses_same_date_and_balance_rules(self):
         self.request(days=4)
-        self.rejects('leave:balance', lambda: self.update(end_date=str(FUTURE + timedelta(days=18)), day_count=19, reason='Extended'))
-        self.rejects('leave:annual_notice', lambda: self.update(start_date=str(TODAY), end_date=str(TODAY), day_count=1))
+        self.rejects('leave:balance', lambda: self.update(end_date=str(FUTURE + timedelta(days=18)), reason='Extended'))
+        self.rejects('leave:annual_notice', lambda: self.update(start_date=str(TODAY), end_date=str(TODAY)))
         self.assertEqual(self.balance()['remaining'], 14)
 
     def test_cross_year_allocation(self):
@@ -179,10 +194,18 @@ class DatabaseRules(unittest.TestCase):
         self.assertEqual(self.balance(TODAY.year, 'sick')['taken_days'],
                          1 if TODAY.month == 1 and TODAY.day == 1 else 2)
 
-    def test_invalid_dates_and_forged_lengths(self):
+    def test_duration_is_derived_and_cannot_be_written(self):
+        columns = {row['name'] for row in self.db.execute('PRAGMA table_info(leave_application)')}
+        self.assertNotIn('day_count', columns)
+        self.request(days=3)
+        with self.assertRaisesRegex(sqlite3.OperationalError, 'no such column: day_count'):
+            self.update(day_count=99)
+        self.assertEqual(self.balance()['pending_days'], 3)
+        self.update(end_date=str(FUTURE))
+        self.assertEqual(self.balance()['pending_days'], 1)
+
+    def test_invalid_dates(self):
         self.request()
-        self.rejects('leave:dates', lambda: self.update(day_count=1.5))
-        self.rejects('leave:dates', lambda: self.update(day_count=2))
         self.rejects('leave:dates', lambda: self.update(start_date=f'{FUTURE.year}-02-30', end_date=f'{FUTURE.year}-02-30'))
 
     def test_notification_failure_rolls_back_decision(self):

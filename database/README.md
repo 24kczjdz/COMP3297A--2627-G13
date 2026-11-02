@@ -6,12 +6,19 @@
 - `migrations/0002_seed.sql`: original demo fixtures; immutable migration history.
 - `migrations/0003_calendar_year_leave_rules.sql`: data-preserving upgrade adding
   decision metadata, a revision number, indexes, views, and rule-enforcing triggers.
-- `database/preflight.sql`: read-only checks against the old schema before upgrade.
+- `migrations/0004_derive_leave_duration.sql`: removes stored `day_count` and updates
+  the four affected triggers to calculate duration directly from the dates.
+- `database/preflight.sql`: read-only date/overlap/quota checks before or after upgrade.
 - `database/queries.sql`: read-only current-year reporting examples after upgrade.
 
 `staff` owns many `leave_application`, `session`, and `notification` rows. A notice
 references one application. The new `decided_by` foreign key records the approver.
 Passwords remain salted hashes; no SQL file introduces a plaintext password column.
+`leave_application` stores only the start/end dates, not a day count. The Worker
+projects a calculated `day_count` when reading records, and preserves the existing
+JSON `dayCount` response field. The yearly view also calculates its own segment
+length; neither value is a persisted column or mutable counter.
+
 Short requests use an empty reason string instead of NULL, retaining compatibility
 with the original NOT NULL column. Empty decision comments are also stored as ''.
 
@@ -26,7 +33,7 @@ counter. Remaining = entitlement - pending_days - approved_days.
 1. Stop accepting writes for the upgrade and export a backup:
 
    ```bash
-   npx wrangler d1 export leaveflowse --remote --output backup-before-0003.sql
+   npx wrangler d1 export leaveflowse --remote --output backup-before-staff-fixes.sql
    npx wrangler d1 execute leaveflowse --remote --file database/preflight.sql
    ```
 
@@ -53,8 +60,11 @@ counter. Remaining = entitlement - pending_days - approved_days.
    acceptance tests at production; they intentionally write fixtures.
 
 Do not delete `.wrangler`, drop tables, rerun seed INSERTs, or rewrite already
-applied migrations to upgrade. Do not apply `0003` repeatedly with `d1 execute`;
-Wrangler's migration tracking applies it once. The original Worker cannot write
+applied migrations to upgrade. Do not apply `0003` or `0004` repeatedly with `d1 execute`;
+Wrangler's migration tracking applies each once. Migration `0004` expects the
+checked-in `0003` schema, including its stored `day_count` column. If a separate
+manual migration already removed that column, inspect and reconcile that schema
+with the migration history before deploying; do not recreate the redundant column. The original Worker cannot write
 to the upgraded schema correctly, so rolling back just the Worker is unsupported.
 Rollback requires the matching database backup and previous Worker together.
 
@@ -87,7 +97,8 @@ npx wrangler dev --local --port 43219 --persist-to .wrangler/requirements-check
 In a second terminal:
 
 ```bash
-python scripts/test-database.py
+npm run test:database
+npm run test:leave
 npm run typecheck
 npm run acceptance
 ```

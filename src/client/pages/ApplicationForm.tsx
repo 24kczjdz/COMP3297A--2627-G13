@@ -1,66 +1,117 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { dayCount, isIsoDate } from "../../shared/dates";
+import { dayCount, hongKongToday, isIsoDate } from "../../shared/dates";
 import { LEAVE_LABEL } from "../../shared/constants";
-import type { LeaveType } from "../../shared/types";
-import { ApiError, createApplication, getApplication, updateApplication } from "../api";
-import { ErrorNote, Field, LoadingNote, PageTitle, PrimaryButton, SelectInput, TextArea, TextInput } from "../components";
+import { GetBalancePreview, kAnnualNoticeDays, kLongLeaveThreshold, kSickBackdateDays, ShiftDate, ValidateLeaveAvailability } from "../../shared/leaveRules";
+import { ValidateLeaveInput } from "../../shared/validate";
+import type { LeaveRecord, LeaveType } from "../../shared/types";
+import { ApiError, createApplication, getApplication, getApplications, updateApplication } from "../api";
+import { useAuth } from "../auth";
+import { ErrorNote, Field, LoadingNote, PageTitle, PrimaryButton, SelectInput, TextArea } from "../components";
+import { LeaveDateInput } from "../LeaveDateInput";
 import { useTitle } from "../useTitle";
 
+/**
+ * Summary: Render and validate a new request or a pending request replacement.
+ * Parameters: mode is "new" or "edit"; edit mode requires a route application ID.
+ * Return Value: The existing form layout with date limits and yearly balance previews.
+ * Side Effects & Constraints: Loads the applicant's history, saves through the API,
+ * refreshes account balances, and navigates after success. SQL enforces live rules;
+ * load/save failures stay visible and never cause an edit to become a new request.
+ */
 export function ApplicationForm({ mode }: { mode: "new" | "edit" }) {
   useTitle(mode === "new" ? "New request" : "Edit request");
   const { id } = useParams();
   const navigate = useNavigate();
-  const [leaveType, setLeaveType] = useState<LeaveType>("annual");
-  const [startDate, setStartDate] = useState("");
-  const [endDate, setEndDate] = useState("");
-  const [reason, setReason] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [locked, setLocked] = useState<string | null>(null);
-  const [loading, setLoading] = useState(mode === "edit");
-  const [pending, setPending] = useState(false);
+  const { refresh } = useAuth();
+  const [leave_type, SetLeaveType] = useState<LeaveType>("annual");
+  const [start_date, SetStartDate] = useState("");
+  const [end_date, SetEndDate] = useState("");
+  const [reason, SetReason] = useState("");
+  const [records, SetRecords] = useState<LeaveRecord[] | null>(null);
+  const [error, SetError] = useState<string | null>(null);
+  const [locked, SetLocked] = useState<string | null>(null);
+  const [loading, SetLoading] = useState(true);
+  const [pending, SetPending] = useState(false);
+  const [reload_index, SetReloadIndex] = useState(0);
 
   useEffect(() => {
-    if (mode !== "edit" || !id) return;
     let active = true;
-    getApplication(id)
-      .then((record) => {
+    SetLoading(true);
+    SetError(null);
+    SetLocked(null);
+    SetRecords(null);
+    const existing_request = mode === "edit"
+      ? (id ? getApplication(id) : Promise.reject(new Error("Missing request ID.")))
+      : Promise.resolve(null);
+    Promise.all([getApplications(), existing_request])
+      .then(([history, record]) => {
         if (!active) return;
-        setLeaveType(record.leaveType);
-        setStartDate(record.startDate);
-        setEndDate(record.endDate);
-        setReason(record.reason);
+        SetRecords(history.applications);
+        if (!record) return;
+        SetLeaveType(record.leaveType);
+        SetStartDate(record.startDate);
+        SetEndDate(record.endDate);
+        SetReason(record.reason);
         if (record.status !== "Pending") {
-          setLocked(`This request is ${record.status}. It can be changed only while it is Pending.`);
+          SetLocked(`This request is ${record.status}. It can be changed only while it is Pending.`);
         }
       })
       .catch((caught: unknown) => {
-        if (!active) return;
-        setError(caught instanceof ApiError ? caught.message : "That request could not be opened.");
+        if (active) SetError(caught instanceof ApiError ? caught.message : "The request and your balance could not be loaded.");
       })
       .finally(() => {
-        if (active) setLoading(false);
+        if (active) SetLoading(false);
       });
-    return () => {
-      active = false;
-    };
-  }, [mode, id]);
+    return () => { active = false; };
+  }, [mode, id, reload_index]);
 
-  const preview = useMemo(() => previewDays(startDate, endDate), [startDate, endDate]);
+  const today = hongKongToday();
+  const minimum_start = leave_type === "annual" ? ShiftDate(today, kAnnualNoticeDays) : "1900-01-01";
+  const minimum_end = leave_type === "annual" ? minimum_start : ShiftDate(today, -kSickBackdateDays);
+  const period = { leave_type, start_date, end_date };
+  const excluded_id = mode === "edit" ? id ?? null : null;
+  const balances = records ? GetBalancePreview(period, records, excluded_id) : [];
+  const needs_reason = isIsoDate(start_date) && isIsoDate(end_date) && dayCount(start_date, end_date) > kLongLeaveThreshold;
 
-  async function onSubmit(event: FormEvent) {
+  /**
+   * Summary: Save a request after checking its input and the latest own history.
+   * Parameters: event is the non-null React form submission event.
+   * Return Value: Resolves after saving/navigation or displaying a refusal.
+   * Side Effects & Constraints: Prevents default submission, reads/writes the API,
+   * and updates React/auth state. Catches network errors; SQL handles concurrent writes.
+   */
+  async function OnSubmit(event: FormEvent) {
     event.preventDefault();
-    setPending(true);
-    setError(null);
-    const body = { leaveType, startDate, endDate, reason };
+    if (pending || loading || locked || !records) return;
+    SetError(null);
+    const body = { leaveType: leave_type, startDate: start_date, endDate: end_date, reason };
+    const parsed = ValidateLeaveInput(body);
+    if (!parsed.ok) {
+      SetError(parsed.error);
+      return;
+    }
+    SetPending(true);
     try {
-      if (mode === "edit" && id) await updateApplication(id, body);
-      else await createApplication(body);
+      const history = await getApplications();
+      SetRecords(history.applications);
+      const refusal = ValidateLeaveAvailability(period, history.applications, excluded_id);
+      if (refusal) {
+        SetError(refusal);
+        return;
+      }
+      if (mode === "edit") {
+        if (!id) throw new Error("Missing request ID.");
+        await updateApplication(id, body);
+      } else {
+        await createApplication(body);
+      }
+      await refresh();
       navigate("/applications");
     } catch (caught) {
-      setError(caught instanceof ApiError ? caught.message : "The request could not be saved.");
+      SetError(caught instanceof ApiError ? caught.message : "The request could not be saved.");
     } finally {
-      setPending(false);
+      SetPending(false);
     }
   }
 
@@ -70,38 +121,47 @@ export function ApplicationForm({ mode }: { mode: "new" | "edit" }) {
         title={mode === "new" ? "New request" : "Edit request"}
         lede="Leave is taken in whole days. The length is every calendar day from the start date through the end date."
       />
-      {loading ? <LoadingNote label="Loading the request…" /> : null}
-      {error ? <div className="mb-4"><ErrorNote message={error} /></div> : null}
+      {loading ? <LoadingNote label="Loading the request and your balance…" /> : null}
+      {error ? <div className="mb-4"><ErrorNote message={error} onRetry={records === null ? () => SetReloadIndex((index) => index + 1) : undefined} /></div> : null}
       {locked ? <div className="mb-4"><ErrorNote message={locked} /></div> : null}
-      {!loading && !locked ? (
-        <form onSubmit={onSubmit} className="space-y-4 rounded-lg border border-rule bg-card p-5">
+      {!loading && !locked && records !== null ? (
+        <form onSubmit={OnSubmit} className="space-y-4 rounded-lg border border-rule bg-card p-5">
           <Field label="Leave type">
-            <SelectInput value={leaveType} onChange={(event) => setLeaveType(event.target.value as LeaveType)}>
+            <SelectInput value={leave_type} onChange={(event) => SetLeaveType(event.target.value as LeaveType)}>
               <option value="annual">{LEAVE_LABEL.annual}</option>
               <option value="sick">{LEAVE_LABEL.sick}</option>
             </SelectInput>
           </Field>
           <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Start date">
-              <TextInput type="date" required value={startDate} onChange={(event) => setStartDate(event.target.value)} />
-            </Field>
-            <Field label="End date">
-              <TextInput type="date" required value={endDate} onChange={(event) => setEndDate(event.target.value)} />
-            </Field>
+            <LeaveDateInput label="Start date" value={start_date} today={today} OnChange={SetStartDate}
+              limits={{ minimum_date: minimum_start, maximum_date: "9998-12-31",
+                annual_notice_date: leave_type === "annual" ? minimum_start : undefined,
+                minimum_message: "This date is outside the supported date range." }} />
+            <LeaveDateInput label="End date" value={end_date} today={today} OnChange={SetEndDate}
+              limits={{ minimum_date: start_date > minimum_end ? start_date : minimum_end, maximum_date: "9998-12-31",
+                annual_notice_date: leave_type === "annual" ? minimum_start : undefined,
+                minimum_message: start_date > minimum_end
+                  ? "The end date cannot be before the start date."
+                  : "The last date of sick leave cannot be more than 7 days ago." }} />
           </div>
-          <p className="rounded-md bg-paper px-3 py-2 text-sm">{preview}</p>
+          <div className="rounded-md bg-paper px-3 py-2 text-sm" aria-live="polite">
+            <p>{PreviewDays(start_date, end_date)}</p>
+            {balances.map((balance) => (
+              <p key={balance.year} className="mt-1">
+                {balance.year}: {balance.available} days available − {balance.days} requested = {balance.remaining} days remaining after saving.
+              </p>
+            ))}
+            {mode === "edit" && balances.length > 0 ? <p className="mt-1">Available days include this request's existing reservation.</p> : null}
+          </div>
           <p className="text-sm text-stone-600">Annual leave needs 2 days' notice. Sick leave may end up to 7 days ago. Pending and approved leave reserve your yearly balance.</p>
-          <Field label="Reason (required for more than 4 days)">
-            <TextArea required={isIsoDate(startDate) && isIsoDate(endDate) && dayCount(startDate, endDate) > 4}
-              maxLength={500} value={reason} onChange={(event) => setReason(event.target.value)} />
+          <Field label={needs_reason ? "Reason (required for more than 4 days)" : "Reason (optional for up to 4 days)"}>
+            <TextArea required={needs_reason} maxLength={500} value={reason} onChange={(event) => SetReason(event.target.value)} />
           </Field>
           <div className="flex items-center gap-4">
             <PrimaryButton type="submit" disabled={pending}>
               {pending ? "Saving…" : mode === "new" ? "Submit request" : "Save changes"}
             </PrimaryButton>
-            <Link to="/applications" className="text-sm underline">
-              Back to my leave
-            </Link>
+            <Link to="/applications" className="text-sm underline">Back to my leave</Link>
           </div>
         </form>
       ) : null}
@@ -109,10 +169,16 @@ export function ApplicationForm({ mode }: { mode: "new" | "edit" }) {
   );
 }
 
-function previewDays(startDate: string, endDate: string): string {
-  if (!startDate || !endDate) return "Enter the start and end dates to see how many days this request covers.";
-  if (!isIsoDate(startDate) || !isIsoDate(endDate)) return "Use a real calendar date.";
-  if (endDate < startDate) return "The end date is before the start date.";
-  const days = dayCount(startDate, endDate);
+/**
+ * Summary: Describe the inclusive duration shown next to the date inputs.
+ * Parameters: start_date and end_date are non-null input strings, possibly empty.
+ * Return Value: A whole-day label, an entry hint, or an invalid-range explanation.
+ * Side Effects & Constraints: Pure; never persists the calculated duration.
+ */
+function PreviewDays(start_date: string, end_date: string): string {
+  if (!start_date || !end_date) return "Enter the start and end dates to see how many days this request covers.";
+  if (!isIsoDate(start_date) || !isIsoDate(end_date)) return "Use a real calendar date.";
+  if (end_date < start_date) return "The end date is before the start date.";
+  const days = dayCount(start_date, end_date);
   return days === 1 ? "1 day" : `${days} days`;
 }

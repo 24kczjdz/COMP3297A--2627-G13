@@ -1,8 +1,16 @@
+import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { useTitle } from "../useTitle";
-import type { Me, QuotaSide } from "../../shared/types";
-import { PageTitle } from "../components";
+import type { LeaveRecord, Me, QuotaSide } from "../../shared/types";
+import { EmptyNote, ErrorNote, LeaveList, LoadingNote, PageTitle } from "../components";
+import { ApiError, getApplications } from "../api";
 
+/**
+ * Summary: Show current-year quotas, remaining balances, taken days, and history.
+ * Parameters: me is the authenticated, non-null profile refreshed by the app frame.
+ * Return Value: The staff dashboard with an additional pending count for approvers.
+ * Side Effects & Constraints: Sets the document title; LeaveHistory loads own records.
+ */
 export function Home({ me }: { me: Me }) {
   useTitle("Home");
   return (
@@ -42,10 +50,52 @@ export function Home({ me }: { me: Me }) {
           </div>
         </section>
       ) : null}
+      <LeaveHistory key={me.id} today={me.hongKongToday} />
     </div>
   );
 }
 
+/**
+ * Summary: Display the applicant's complete leave history and corresponding statuses.
+ * Parameters: today is the current Hong Kong ISO date, never null.
+ * Return Value: Existing leave cards, or an explicit loading, empty, or retry state.
+ * Side Effects & Constraints: Fetches only /api/applications (server ownership scoped).
+ * A cleanup guard prevents stale responses from updating an unmounted dashboard.
+ */
+function LeaveHistory({ today }: { today: string }) {
+  const [records, SetRecords] = useState<LeaveRecord[] | null>(null);
+  const [error, SetError] = useState<string | null>(null);
+  const [reload_index, SetReloadIndex] = useState(0);
+  const Retry = useCallback(() => SetReloadIndex((index) => index + 1), []);
+
+  useEffect(() => {
+    let active = true;
+    SetError(null);
+    getApplications()
+      .then((result) => { if (active) SetRecords(result.applications); })
+      .catch((caught: unknown) => {
+        if (active) SetError(caught instanceof ApiError ? caught.message : "Your leave history could not be loaded.");
+      });
+    return () => { active = false; };
+  }, [reload_index]);
+
+  return (
+    <section className="mt-8" aria-label="Leave history">
+      <h2 className="mb-4 font-serif text-2xl">Leave history</h2>
+      {error ? <ErrorNote message={error} onRetry={Retry} /> : null}
+      {records === null && !error ? <LoadingNote label="Loading your leave history…" /> : null}
+      {records?.length === 0 ? <EmptyNote title="No requests yet" body="Your leave requests and their statuses will appear here." /> : null}
+      {records && records.length > 0 ? <LeaveList records={records} today={today} /> : null}
+    </section>
+  );
+}
+
+/**
+ * Summary: Display entitlement and remaining days as distinct quota values.
+ * Parameters: label names the leave type; quota is the non-null current-year SQL summary.
+ * Return Value: A quota card including approved days taken through today.
+ * Side Effects & Constraints: Render-only; does not calculate or mutate balances.
+ */
 function QuotaCard({ label, quota }: { label: string; quota: QuotaSide }) {
   return (
     <section className="rounded-lg border border-rule bg-card p-5">
@@ -61,8 +111,6 @@ function QuotaCard({ label, quota }: { label: string; quota: QuotaSide }) {
           <dd className="mt-1 font-serif text-3xl">{quota.remaining}</dd>
           <p className="text-xs text-stone-600">whole days</p>
         </div>
-        <div><dt className="text-sm text-stone-500">Pending</dt><dd>{quota.pending} days</dd></div>
-        <div><dt className="text-sm text-stone-500">Approved</dt><dd>{quota.spent} days</dd></div>
         <div className="col-span-2"><dt className="text-sm text-stone-500">Taken this year (approved days through today)</dt><dd>{quota.taken} days</dd></div>
       </dl>
     </section>

@@ -8,7 +8,7 @@ import {
   companyEmailError,
   isCompanyEmail,
   normalizeEmail,
-  validateLeaveInput,
+  ValidateLeaveInput,
   validatePassword,
   validateProfileFields,
 } from "../shared/validate";
@@ -68,9 +68,11 @@ type Variables = {
 };
 
 const COOKIE = "leaveflowse_session";
-const LEAVE_COLUMNS = `
+// Duration is a read-time projection, never a column written by the Worker.
+const kLeaveColumns = `
   a.id, a.applicant_id, s.name AS applicant_name, s.staff_code AS applicant_staff_code,
-  a.leave_type, a.start_date, a.end_date, a.day_count, a.reason, a.status, a.archived,
+  a.leave_type, a.start_date, a.end_date,
+  CAST(julianday(a.end_date) - julianday(a.start_date) + 1 AS INTEGER) AS day_count, a.reason, a.status, a.archived,
   a.submitted_at, a.decided_at, a.cancelled_at, a.updated_at,
   a.decision_comment, a.decided_by, a.revision
 `;
@@ -186,7 +188,7 @@ api.get("/me", async (c) => c.json(await buildMe(c.env.DB, c.get("staff"))));
 api.get("/applications", async (c) => {
   const staff = c.get("staff");
   const rows = await c.env.DB.prepare(
-    `SELECT ${LEAVE_COLUMNS}
+    `SELECT ${kLeaveColumns}
      FROM leave_application a JOIN staff s ON s.id = a.applicant_id
      WHERE a.applicant_id = ?
      ORDER BY a.submitted_at DESC, a.id DESC`,
@@ -202,17 +204,24 @@ api.get("/applications/:id", async (c) => {
   return c.json(toLeave(row));
 });
 
+/**
+ * Summary: Create a pending leave request from its dates and optional reason.
+ * Parameters: c is an authenticated Hono context with untrusted JSON input.
+ * Return Value: HTTP 201 with a derived duration, or HTTP 400 for invalid leave.
+ * Side Effects & Constraints: Inserts one D1 row; SQL checks live overlaps and
+ * yearly balances atomically. Trigger failures use the shared API error handler.
+ */
 api.post("/applications", async (c) => {
-  const parsed = validateLeaveInput(await readJson(c));
+  const parsed = ValidateLeaveInput(await readJson(c));
   if (!parsed.ok) return c.json({ error: parsed.error }, 400);
   const staff = c.get("staff");
   const now = new Date().toISOString();
   const id = crypto.randomUUID();
   await c.env.DB.prepare(
     `INSERT INTO leave_application (
-      id, applicant_id, leave_type, start_date, end_date, day_count, reason, status, archived,
+      id, applicant_id, leave_type, start_date, end_date, reason, status, archived,
       submitted_at, decided_at, cancelled_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'Pending', 0, ?, NULL, NULL, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, 'Pending', 0, ?, NULL, NULL, ?)`,
   )
     .bind(
       id,
@@ -220,7 +229,6 @@ api.post("/applications", async (c) => {
       parsed.value.leaveType,
       parsed.value.startDate,
       parsed.value.endDate,
-      parsed.value.dayCount,
       parsed.value.reason,
       now,
       now,
@@ -230,18 +238,26 @@ api.post("/applications", async (c) => {
   return c.json(toLeave(row!), 201);
 });
 
+/**
+ * Summary: Replace an applicant's pending request under the same submission rules.
+ * Parameters: c supplies the signed-in applicant, route ID, and untrusted JSON.
+ * Return Value: The updated record, 404 for missing ownership, 400 for a refusal,
+ * or 409 when another write changed the record after it was read.
+ * Side Effects & Constraints: Updates dates/reason and increments revision in D1;
+ * SQL excludes the old reservation and derives the replacement days from dates.
+ */
 api.patch("/applications/:id", async (c) => {
   const staff = c.get("staff");
   const existing = await ownApplication(c.env.DB, staff.id, c.req.param("id"));
   if (!existing) return c.json({ error: "That application is not on your record." }, 404);
   const refusal = assertCanModify(existing.status);
   if (refusal) return c.json({ error: refusal }, 400);
-  const parsed = validateLeaveInput(await readJson(c));
+  const parsed = ValidateLeaveInput(await readJson(c));
   if (!parsed.ok) return c.json({ error: parsed.error }, 400);
   const now = new Date().toISOString();
   const result = await c.env.DB.prepare(
     `UPDATE leave_application
-     SET leave_type = ?, start_date = ?, end_date = ?, day_count = ?, reason = ?, status = 'Pending', archived = 0,
+     SET leave_type = ?, start_date = ?, end_date = ?, reason = ?, status = 'Pending', archived = 0,
          updated_at = ?, revision = revision + 1
      WHERE id = ? AND applicant_id = ? AND status = 'Pending' AND revision = ?`,
   )
@@ -249,7 +265,6 @@ api.patch("/applications/:id", async (c) => {
       parsed.value.leaveType,
       parsed.value.startDate,
       parsed.value.endDate,
-      parsed.value.dayCount,
       parsed.value.reason,
       now,
       existing.id,
@@ -404,7 +419,7 @@ api.patch("/approver/staff/:id", async (c) => {
 
 api.get("/approver/pending", async (c) => {
   const rows = await c.env.DB.prepare(
-    `SELECT ${LEAVE_COLUMNS}
+    `SELECT ${kLeaveColumns}
      FROM leave_application a JOIN staff s ON s.id = a.applicant_id
      WHERE a.status = 'Pending'
      ORDER BY a.start_date ASC, a.submitted_at ASC, a.id ASC`,
@@ -451,7 +466,7 @@ api.get("/approver/on-date", async (c) => {
   const date = c.req.query("date") ?? "";
   if (!isIsoDate(date)) return c.json({ error: "Choose a date to see who is away." }, 400);
   const rows = await c.env.DB.prepare(
-    `SELECT ${LEAVE_COLUMNS}
+    `SELECT ${kLeaveColumns}
      FROM leave_application a JOIN staff s ON s.id = a.applicant_id
      WHERE a.start_date <= ? AND a.end_date >= ?
      ORDER BY s.name ASC, a.start_date ASC`,
@@ -541,7 +556,7 @@ async function buildMe(db: D1Database, staff: StaffRow): Promise<Me> {
 async function ownApplication(db: D1Database, staffId: string, id: string): Promise<LeaveRow | null> {
   return db
     .prepare(
-      `SELECT ${LEAVE_COLUMNS}
+      `SELECT ${kLeaveColumns}
        FROM leave_application a JOIN staff s ON s.id = a.applicant_id
        WHERE a.id = ? AND a.applicant_id = ?`,
     )
@@ -552,7 +567,7 @@ async function ownApplication(db: D1Database, staffId: string, id: string): Prom
 async function applicationById(db: D1Database, id: string): Promise<LeaveRow | null> {
   return db
     .prepare(
-      `SELECT ${LEAVE_COLUMNS}
+      `SELECT ${kLeaveColumns}
        FROM leave_application a JOIN staff s ON s.id = a.applicant_id
        WHERE a.id = ?`,
     )

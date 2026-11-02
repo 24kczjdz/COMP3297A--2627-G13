@@ -55,7 +55,7 @@ status(await approver(`/api/approver/staff/${staff.data.id}`, 'PATCH', { ...staf
 equal(status(await staff.request('/api/me'), 200).department, 'Finance');
 
 const body = annual(shift(today, 2), 2);
-const created = status(await staff.request('/api/applications', 'POST', body), 201);
+const created = status(await staff.request('/api/applications', 'POST', { ...body, dayCount: 999 }), 201);
 equal(created.reason, ''); equal(created.dayCount, 2); equal(created.status, 'Pending');
 equal(status(await staff.request('/api/me'), 200).quota.annual.remaining, 18 - currentDays(body));
 status(await other.request(`/api/applications/${created.id}`), 404);
@@ -64,9 +64,13 @@ const editedBody = annual(shift(today, 2), 3);
 equal(status(await staff.request(`/api/applications/${created.id}`, 'PATCH', editedBody), 200).revision, 1);
 equal(status(await staff.request('/api/me'), 200).quota.annual.remaining, 18 - currentDays(editedBody));
 status(await staff.request('/api/applications', 'POST', sick(shift(today, 3))), 400);
+status(await staff.request('/api/applications', 'POST', annual(shift(today, 3))), 400);
 status(await staff.request(`/api/applications/${created.id}/cancel`, 'POST'), 200);
 equal(status(await staff.request('/api/me'), 200).quota.annual.remaining, 18);
-status(await staff.request('/api/applications', 'POST', annual(shift(today, 1))), 400);
+for (const offset of [-27, -1, 0, 1]) {
+  const refused = status(await staff.request('/api/applications', 'POST', annual(shift(today, offset))), 400);
+  assert.match(refused.error, /2 calendar days/);
+}
 status(await staff.request('/api/applications', 'POST', sick(shift(today, -8))), 400);
 status(await staff.request('/api/applications', 'POST', annual(future, 5)), 400);
 status(await staff.request('/api/applications', 'POST', { ...annual(future), endDate: shift(future, -1) }), 400);
@@ -115,6 +119,35 @@ equal(queue.applications.map((r) => r.startDate), queue.applications.map((r) => 
 const onDate = status(await approver(`/api/approver/on-date?date=${body.startDate}`), 200);
 assert.ok(onDate.applications.some((r) => r.id === toReject.id && r.status === 'Disapproved'));
 assert.ok(status(await staff.request('/api/applications'), 200).applications.every((r) => r.applicantId === staff.data.id));
+// Exercise short/long reasons and multi-year quotas through the real Worker.
+const boundary_staff = await account(4);
+for (const reason of [undefined, null, '', '   ']) {
+  const request_body = annual(`${year + 1}-06-01`, 4, reason);
+  const short_leave = status(await boundary_staff.request('/api/applications', 'POST', request_body), 201);
+  equal(short_leave.reason, '');
+  equal(short_leave.dayCount, 4);
+  status(await boundary_staff.request(`/api/applications/${short_leave.id}`, 'PATCH',
+    annual(request_body.startDate, 5, reason)), 400);
+  equal(status(await boundary_staff.request(`/api/applications/${short_leave.id}`), 200).dayCount, 4);
+  status(await boundary_staff.request(`/api/applications/${short_leave.id}/cancel`, 'POST'), 200);
+}
+const cross_year_start = `${year + 1}-12-30`;
+const cross_year = status(await boundary_staff.request('/api/applications', 'POST',
+  annual(cross_year_start, 5, 'New year trip')), 201);
+equal(cross_year.dayCount, 5);
+equal(status(await boundary_staff.request('/api/me'), 200).quota.annual.remaining, 18);
+const next_year_reservation = status(await boundary_staff.request('/api/applications', 'POST',
+  annual(`${year + 2}-02-01`, 15, 'Remaining next year quota')), 201);
+status(await boundary_staff.request('/api/applications', 'POST', annual(`${year + 2}-03-01`)), 400);
+status(await boundary_staff.request(`/api/applications/${cross_year.id}`, 'PATCH',
+  annual(cross_year_start, 6, 'One extra next year day')), 400);
+equal(status(await boundary_staff.request(`/api/applications/${cross_year.id}`), 200).dayCount, 5);
+status(await boundary_staff.request(`/api/applications/${next_year_reservation.id}`, 'PATCH',
+  annual(cross_year_start, 1)), 400);
+status(await boundary_staff.request(`/api/applications/${cross_year.id}/cancel`, 'POST'), 200);
+status(await boundary_staff.request(`/api/applications/${next_year_reservation.id}`, 'PATCH',
+  annual(next_year_reservation.startDate, 18, 'Quota released by cancellation')), 200);
+
 status(await staff.request('/api/session', 'DELETE'), 200);
 status(await staff.request('/api/me'), 401);
 console.log(`All ${checks} API acceptance assertions passed against ${base}.`);

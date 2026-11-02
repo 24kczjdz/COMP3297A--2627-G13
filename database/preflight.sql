@@ -1,16 +1,14 @@
--- READ ONLY. Run before migration 0003 against the existing database.
+-- READ ONLY. Date-based checks work before and after migrations 0003/0004.
 -- Each nonempty result set needs review. Never silently delete historical data.
 SELECT lower(trim(email)) AS normalized_email, COUNT(*) AS accounts
 FROM staff GROUP BY lower(trim(email)) HAVING COUNT(*) > 1;
 
 SELECT COUNT(*) AS approver_count FROM staff WHERE role = 'approver' HAVING COUNT(*) > 1;
 
-SELECT id, start_date, end_date, day_count FROM leave_application
+SELECT id, start_date, end_date FROM leave_application
 WHERE length(start_date) != 10 OR length(end_date) != 10
    OR date(start_date, '+0 days') IS NOT start_date
-   OR date(end_date, '+0 days') IS NOT end_date OR end_date < start_date
-   OR typeof(day_count) != 'integer'
-   OR day_count != CAST(julianday(end_date) - julianday(start_date) + 1 AS INTEGER);
+   OR date(end_date, '+0 days') IS NOT end_date OR end_date < start_date;
 
 SELECT a.applicant_id, a.id AS application_a, b.id AS application_b
 FROM leave_application a JOIN leave_application b
