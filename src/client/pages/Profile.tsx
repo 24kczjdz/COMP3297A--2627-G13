@@ -3,6 +3,12 @@ import type { Me } from "../../shared/types";
 import { PageTitle } from "../components";
 import { useTitle } from "../useTitle";
 
+/**
+ * Summary: Display personal information, yearly entitlements, and live balances.
+ * Parameters: me is the authenticated non-null account summary from /api/me.
+ * Return Value: The read-only profile with remaining balances explicitly labelled.
+ * Side Effects & Constraints: Sets the document title; never modifies account data.
+ */
 export function Profile({ me }: { me: Me }) {
   useTitle("Profile");
   const rows = [
@@ -13,7 +19,9 @@ export function Profile({ me }: { me: Me }) {
     ["Department", me.department],
     ["Year joined", String(me.yearJoined)],
     [`Annual leave quota (${me.quotaYear})`, `${me.quota.annual.entitlement} days`],
+    [`Annual leave remaining (${me.quotaYear})`, `${me.quota.annual.remaining} days`],
     [`Sick leave quota (${me.quotaYear})`, `${me.quota.sick.entitlement} days`],
+    [`Sick leave remaining (${me.quotaYear})`, `${me.quota.sick.remaining} days`],
   ];
   return (
     <div>

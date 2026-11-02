@@ -23,3 +23,8 @@ textarea {
 ::selection {
   background: #d7ebe3;
 }
+
+/* The custom calendar provides per-day hints; retain native date entry/validation. */
+.leave-date-input::-webkit-calendar-picker-indicator {
+  display: none;
+}

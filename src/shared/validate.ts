@@ -1,5 +1,6 @@
 import { COMPANY_DOMAIN } from "./constants";
 import { dayCount, hongKongToday, isIsoDate } from "./dates";
+import { kLongLeaveThreshold, ValidateLeaveDates } from "./leaveRules";
 import type { LeaveType } from "./types";
 
 export function normalizeEmail(email: string): string {
@@ -24,8 +25,18 @@ function cleanText(value: unknown, max: number): string | null {
   return trimmed;
 }
 
-export function validateLeaveInput(
+/**
+ * Summary: Normalize a request and enforce date and conditional-reason rules.
+ * Parameters: body is untrusted JSON (including null); today is a valid Hong Kong
+ * ISO date, defaulting to the current date. Reasons may be absent, null, or blank
+ * for up to four days; nonblank reasons must contain at most 500 characters.
+ * Return Value: Normalized API fields with a derived dayCount, or a validation error.
+ * Side Effects & Constraints: Does not mutate input or persist duration. Reads the
+ * clock only for the default date; overlap/balance checks require separate data.
+ */
+export function ValidateLeaveInput(
   body: unknown,
+  today: string = hongKongToday(),
 ):
   | {
       ok: true;
@@ -36,33 +47,32 @@ export function validateLeaveInput(
     return { ok: false, error: "The request body must be JSON." };
   }
   const record = body as Record<string, unknown>;
-  const leaveType = record.leaveType;
-  if (leaveType !== "annual" && leaveType !== "sick") {
+  const leave_type = record.leaveType;
+  if (leave_type !== "annual" && leave_type !== "sick") {
     return { ok: false, error: "Choose annual or sick leave." };
   }
-  const startDate = record.startDate;
-  const endDate = record.endDate;
-  if (typeof startDate !== "string" || typeof endDate !== "string" || !isIsoDate(startDate) || !isIsoDate(endDate)) {
+  const start_date = record.startDate;
+  const end_date = record.endDate;
+  if (typeof start_date !== "string" || typeof end_date !== "string" || !isIsoDate(start_date) || !isIsoDate(end_date)) {
     return { ok: false, error: "Enter a start date and an end date." };
   }
-  if (endDate < startDate) {
-    return { ok: false, error: "The end date is before the start date." };
-  }
-  const rawReason = record.reason ?? "";
-  if (typeof rawReason !== "string" || rawReason.trim().length > 500 || /[\u0000-\u001F]/.test(rawReason)) {
+  const date_error = ValidateLeaveDates({ leave_type, start_date, end_date }, today);
+  if (date_error) return { ok: false, error: date_error };
+  const raw_reason = record.reason ?? "";
+  if (typeof raw_reason !== "string" || raw_reason.trim().length > 500 || /[\u0000-\u001F]/.test(raw_reason)) {
     return { ok: false, error: "Use a reason of 500 characters or fewer." };
   }
-  const reason = rawReason.trim().replace(/\s+/g, " ");
-  const days = dayCount(startDate, endDate);
-  if (days > 4 && !reason) {
+  const reason = raw_reason.trim().replace(/\s+/g, " ");
+  const days = dayCount(start_date, end_date);
+  if (days > kLongLeaveThreshold && !reason) {
     return { ok: false, error: "A reason is required for leave longer than 4 days." };
   }
   return {
     ok: true,
     value: {
-      leaveType,
-      startDate,
-      endDate,
+      leaveType: leave_type,
+      startDate: start_date,
+      endDate: end_date,
       reason,
       dayCount: days,
     },

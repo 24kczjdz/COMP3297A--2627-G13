@@ -9,6 +9,8 @@
     "migrate:local": "wrangler d1 migrations apply leaveflowse --local",
     "generate-seed": "node scripts/generate-seed.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.worker.json",
+    "test:leave": "node scripts/test-leave.mjs",
+    "test:database": "python3 scripts/test-database.py",
     "acceptance": "node scripts/acceptance.mjs"
   },
   "dependencies": {

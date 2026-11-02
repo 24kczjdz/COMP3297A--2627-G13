@@ -1,5 +1,8 @@
 # Validation report - Group 13 database upgrade
 
+This report records the earlier database-upgrade baseline. For the latest staff-side
+fixes and verification results, see [STAFF_BUGFIX_IMPLEMENTATION.md](STAFF_BUGFIX_IMPLEMENTATION.md).
+
 Validated locally on 1 November 2026 against base commit
 `1db7c0dac08e74433010a148184db806504791e8` and the changes in this package.
 The remote Cloudflare database and deployed application were not modified.

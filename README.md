@@ -22,7 +22,7 @@ Open [http://127.0.0.1:43219](http://127.0.0.1:43219).
 
 ## Upgrade an existing database
 
-Read [database/README.md](database/README.md) first. Migrations `0001` and `0002` remain unchanged because they may already be applied. `0003_calendar_year_leave_rules.sql` upgrades those installations in place. Apply it together with this version of the Worker: older Workers do not supply the revision and decision metadata it requires.
+Read [database/README.md](database/README.md) first. Migrations `0001` and `0002` remain unchanged because they may already be applied. `0003_calendar_year_leave_rules.sql` adds calendar-year rules. `0004_derive_leave_duration.sql` removes the redundant stored duration while preserving the other data and existing balance views. Apply all pending migrations together with this version of the Worker: older Workers still write the removed `day_count` column.
 
 The database enforces date/length validity, notice and backdating rules, required long-leave reasons/comments, overlap prevention, and per-year quota limits. SQL views calculate balances from application records; no mutable balance counter or yearly reset job is needed. Decision notifications are inserted by a trigger within the decision's write statement.
 
@@ -68,9 +68,12 @@ The app is deployed at [https://leaveflowse.slender-gray.workers.dev](https://le
 
 ```bash
 npm run typecheck
-python scripts/test-database.py
+npm run test:database
+npm run test:leave
 npm run acceptance
 npm run build
 ```
 
 `test-database.py` needs only Python 3's standard library. `npm run acceptance` expects a disposable local app on port 43219 and writes uniquely named test staff and leave records; it refuses remote hosts. See [ACCEPTANCE.md](ACCEPTANCE.md) for coverage and the isolated test setup. The previously documented cloud URL is not updated by these local changes.
+
+See [STAFF_BUGFIX_IMPLEMENTATION.md](STAFF_BUGFIX_IMPLEMENTATION.md) for the staff-side fixes, functions involved, migration notes, and regression results.
