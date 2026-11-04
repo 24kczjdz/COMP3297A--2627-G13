@@ -30,7 +30,7 @@ export const getApplications = () => api<{ applications: LeaveRecord[] }>("/api/
 export const getApplication = (id: string) => api<LeaveRecord>(`/api/applications/${id}`);
 export const createApplication = (body: unknown) =>
   api<LeaveRecord>("/api/applications", { method: "POST", body: JSON.stringify(body) });
-export const updateApplication = (id: string, body: unknown) =>
+export const updateApplication = (id: string, body: Pick<LeaveRecord, "leaveType" | "startDate" | "endDate" | "reason" | "revision">) =>
   api<LeaveRecord>(`/api/applications/${id}`, { method: "PATCH", body: JSON.stringify(body) });
 export const cancelApplication = (id: string) =>
   api<LeaveRecord>(`/api/applications/${id}/cancel`, { method: "POST" });
@@ -49,10 +49,10 @@ export const updateStaff = (id: string, body: unknown) =>
 
 export const getPending = () =>
   api<{ count: number; applications: LeaveRecord[] }>("/api/approver/pending");
-export const decideApplication = (id: string, decision: "approve" | "disapprove", comment = "") =>
+export const decideApplication = (id: string, revision: number, decision: "approve" | "disapprove", comment = "") =>
   api<LeaveRecord>(`/api/approver/applications/${id}/decision`, {
     method: "POST",
-    body: JSON.stringify({ decision, comment }),
+    body: JSON.stringify({ decision, comment, revision }),
   });
 export const getOnDate = (date: string) =>
   api<{ date: string; applications: LeaveRecord[] }>(`/api/approver/on-date?date=${encodeURIComponent(date)}`);

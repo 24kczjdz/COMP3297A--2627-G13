@@ -76,4 +76,6 @@ npm run build
 
 `test-database.py` needs only Python 3's standard library. `npm run acceptance` expects a disposable local app on port 43219 and writes uniquely named test staff and leave records; it refuses remote hosts. See [ACCEPTANCE.md](ACCEPTANCE.md) for coverage and the isolated test setup. The previously documented cloud URL is not updated by these local changes.
 
+Editing and approving/rejecting an application require the `revision` from the record displayed to the user. `PATCH /api/applications/:id` and `POST /api/approver/applications/:id/decision` reject missing/invalid revisions with HTTP 400 and stale revisions with HTTP 409. Reload and review the latest record before retrying; do not silently fetch a newer revision and resubmit an old edit or decision. Deploy the matching client and Worker together and reload any already-open pages. No additional database migration is required for this change.
+
 See [STAFF_BUGFIX_IMPLEMENTATION.md](STAFF_BUGFIX_IMPLEMENTATION.md) for the staff-side fixes, functions involved, migration notes, and regression results.

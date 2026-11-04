@@ -69,7 +69,7 @@ export function OnDate() {
                 </div>
                 <StatusBadge status={record.status} />
               </div>
-              <p className="mt-3 text-sm">{record.reason}</p>
+              <p className="mt-3 whitespace-pre-wrap text-sm">{record.reason}</p>
             </li>
           ))}
         </ul>

@@ -157,8 +157,8 @@ export function LeaveList({
               </div>
               <StatusBadge status={record.status} />
             </div>
-            <p className="mt-3 text-sm">{record.reason}</p>
-            {record.decisionComment ? <p className="mt-2 text-sm text-stone-600">Approver comment: {record.decisionComment}</p> : null}
+            <p className="mt-3 whitespace-pre-wrap text-sm">{record.reason}</p>
+            {record.decisionComment ? <p className="mt-2 whitespace-pre-wrap text-sm text-stone-600">Approver comment: {record.decisionComment}</p> : null}
             {record.archived ? <p className="mt-2 text-xs uppercase tracking-wide text-stone-500">Archived</p> : null}
             {onCancel && (record.status === "Pending" || allowCancel) ? (
               <div className="mt-3 flex flex-wrap gap-2">

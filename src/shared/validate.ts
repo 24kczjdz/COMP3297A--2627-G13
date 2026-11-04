@@ -30,6 +30,7 @@ function cleanText(value: unknown, max: number): string | null {
  * Parameters: body is untrusted JSON (including null); today is a valid Hong Kong
  * ISO date, defaulting to the current date. Reasons may be absent, null, or blank
  * for up to four days; nonblank reasons must contain at most 500 characters.
+ * Tabs and line breaks are accepted; CRLF/CR line endings become LF.
  * Return Value: Normalized API fields with a derived dayCount, or a validation error.
  * Side Effects & Constraints: Does not mutate input or persist duration. Reads the
  * clock only for the default date; overlap/balance checks require separate data.
@@ -59,10 +60,10 @@ export function ValidateLeaveInput(
   const date_error = ValidateLeaveDates({ leave_type, start_date, end_date }, today);
   if (date_error) return { ok: false, error: date_error };
   const raw_reason = record.reason ?? "";
-  if (typeof raw_reason !== "string" || raw_reason.trim().length > 500 || /[\u0000-\u001F]/.test(raw_reason)) {
+  if (typeof raw_reason !== "string" || raw_reason.trim().length > 500 || /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/.test(raw_reason)) {
     return { ok: false, error: "Use a reason of 500 characters or fewer." };
   }
-  const reason = raw_reason.trim().replace(/\s+/g, " ");
+  const reason = raw_reason.trim().replace(/\r\n?/g, "\n");
   const days = dayCount(start_date, end_date);
   if (days > kLongLeaveThreshold && !reason) {
     return { ok: false, error: "A reason is required for leave longer than 4 days." };
