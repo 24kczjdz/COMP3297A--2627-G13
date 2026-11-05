@@ -2,13 +2,25 @@
 
 ## Files and data model
 
-- `migrations/0001_schema.sql`: original four tables; immutable migration history.
-- `migrations/0002_seed.sql`: original demo fixtures; immutable migration history.
+- `migrations/0001_schema.sql`: creates the four tables. The application table
+  stores start/end dates and never creates a duration column.
+- `migrations/0002_seed.sql`: demo fixtures matching that date-only table.
 - `migrations/0003_calendar_year_leave_rules.sql`: data-preserving upgrade adding
   decision metadata, a revision number, indexes, views, and rule-enforcing triggers.
-- `migrations/0004_derive_leave_duration.sql`: removes stored `day_count` and updates
-  the four affected triggers to calculate duration directly from the dates.
+- `migrations/0004_derive_leave_duration.sql`: verifies that no stored `day_count`
+  exists. It keeps the migration filename for existing migration ledgers, but does
+  not create or remove a duration column on a fresh database.
+- `database/legacy-migrations/0001` through `0004`: unchanged copies of the old
+  schema/seed/rules/column-removal upgrade, used only for databases that still
+  contain the old duration column. They are outside the normal migration directory.
 - `database/preflight.sql`: read-only date/overlap/quota checks before or after upgrade.
+- `migrations/0005_delete_staff_accounts.sql`: retained soft-deletion support.
+  Setting `staff.deleted_at` revokes sessions; the Worker excludes marked accounts.
+  The current UI uses permanent deletion instead, but this capability is retained.
+- `migrations/0006_permanent_staff_deletion.sql`: a confirmed staff deletion now
+  removes the account, its sessions, its leave applications and their notifications
+  atomically. The approver account is protected. Applying the migration itself
+  does not purge any data.
 - `database/queries.sql`: read-only current-year reporting examples after upgrade.
 
 `staff` owns many `leave_application`, `session`, and `notification` rows. A notice
@@ -19,6 +31,11 @@ projects a calculated `day_count` when reading records, and preserves the existi
 JSON `dayCount` response field. The yearly view also calculates its own segment
 length; neither value is a persisted column or mutable counter.
 
+The current initialization files were deliberately revised so a fresh database
+never stores duration, even temporarily. Existing databases are not rebuilt:
+Wrangler records applied migration filenames in `d1_migrations` and does not
+replay them. The preserved legacy files provide the upgrade path for older states.
+
 Short requests use an empty reason string instead of NULL, retaining compatibility
 with the original NOT NULL column. Empty decision comments are also stored as ''.
 
@@ -28,7 +45,39 @@ remaining for each staff/year/type. Current-year rows exist even without request
 other years appear when a request covers them. Never manually maintain a balance
 counter. Remaining = entitlement - pending_days - approved_days.
 
-## Existing installations
+The API reads these yearly request segments through `ReadLeaveSummary` with one
+captured Hong Kong reporting date, so a request crossing midnight cannot mix two
+dates or years. The standalone `leave_balance` view continues to use SQLite's
+current time for direct SQL reports. Annual Home usage is entitlement minus
+remaining; see [the latest reporting change](../docs/QUOTA_USAGE_IMPLEMENTATION.md).
+
+## Choosing the migration path
+
+An empty database, or a database that already applied the original `0004`, uses
+the normal command:
+
+```bash
+npm run migrate:local
+```
+
+For a remote database, use `npx wrangler d1 migrations apply leaveflowse --remote`.
+These are separate databases; a local migration does not modify the remote one.
+
+For an older database, inspect its structure and pending migrations first:
+
+```bash
+npx wrangler d1 execute leaveflowse --local --command "PRAGMA table_info(leave_application);"
+npx wrangler d1 migrations list leaveflowse --local
+```
+
+If the application table still contains `day_count`, use the legacy procedure
+below. A `legacy_duration_requires_upgrade` constraint failure in current `0004`
+also identifies this case. Do not bypass the check or delete existing data.
+Choose the legacy path before applying normal migrations: an older database
+stopped at `0001` can already fail at the revised `0002` because its old duration
+column is still required.
+
+## Existing installations and legacy upgrade
 
 1. Stop accepting writes for the upgrade and export a backup:
 
@@ -46,8 +95,33 @@ counter. Remaining = entitlement - pending_days - approved_days.
    resolve them. Existing decisions have NULL `decided_by` because their actor was
    not recorded; no actor is invented during upgrade.
 
-3. Apply the pending migrations and deploy the updated application in the same
-   maintenance window:
+3. **Only if the existing application table still has `day_count`:** finish the
+   archived migrations through the original `0004` first. Create a temporary copy
+   of `wrangler.toml` named `wrangler.legacy.toml` in the repository root. In that
+   copy, change only the migration directory:
+
+   ```toml
+   migrations_dir = "database/legacy-migrations"
+   ```
+
+   Keep the same database name, ID, and binding. From the repository root, run:
+
+   ```bash
+   npx wrangler d1 migrations apply leaveflowse --remote --config wrangler.legacy.toml
+   ```
+
+   For a local database use `--local --persist-to .wrangler/state` instead of
+   `--remote`; if that database uses a custom persistence directory, pass that same
+   directory. Wrangler uses the original migration filenames and existing ledger
+   to apply only missing legacy steps. This supports older databases stopped after
+   `0001`, `0002`, or `0003` without reseeding already migrated data. The archived
+   `0004` removes the obsolete column and preserves all other data.
+
+   Do not use the archived chain to create new databases. Do not commit or deploy
+   the temporary legacy configuration; remove that temporary copy after this step.
+
+4. Apply remaining normal migrations and deploy the matching application in the
+   same maintenance window. Omit the temporary configuration argument:
 
    ```bash
    npx wrangler d1 migrations apply leaveflowse --remote
@@ -55,18 +129,17 @@ counter. Remaining = entitlement - pending_days - approved_days.
    npx wrangler deploy
    ```
 
-4. Check profiles, current-year balances, history, and the pending queue. Use the
+5. Check profiles, current-year balances, history, and the pending queue. Use the
    same commands with `--local` first on a local copy. Do not point automated
    acceptance tests at production; they intentionally write fixtures.
 
-Do not delete `.wrangler`, drop tables, rerun seed INSERTs, or rewrite already
-applied migrations to upgrade. Do not apply `0003` or `0004` repeatedly with `d1 execute`;
-Wrangler's migration tracking applies each once. Migration `0004` expects the
-checked-in `0003` schema, including its stored `day_count` column. If a separate
-manual migration already removed that column, inspect and reconcile that schema
-with the migration history before deploying; do not recreate the redundant column. The original Worker cannot write
-to the upgraded schema correctly, so rolling back just the Worker is unsupported.
-Rollback requires the matching database backup and previous Worker together.
+Do not delete `.wrangler`, drop tables, rerun seed INSERTs, or alter migration
+ledger rows to upgrade. Keep the archived SQL unchanged. Do not repeatedly run
+migration files with `d1 execute`; let Wrangler track each applied filename.
+If the schema was manually modified and no longer matches its recorded migration
+history, reconcile that installation separately. Do not recreate the obsolete
+column. Old Workers that still write `day_count` cannot run against the new schema;
+rollback requires the matching database backup and previous Worker together.
 
 ## Atomicity and concurrency
 

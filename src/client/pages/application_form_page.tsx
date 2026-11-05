@@ -1,15 +1,16 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { dayCount, hongKongToday, isIsoDate } from "../../shared/dates";
-import { LEAVE_LABEL } from "../../shared/constants";
-import { GetBalancePreview, kAnnualNoticeDays, kLongLeaveThreshold, kSickBackdateDays, ShiftDate, ValidateLeaveAvailability } from "../../shared/leaveRules";
+import { DayCount, HongKongToday, IsIsoDate } from "../../shared/dates";
+import { kLeaveLabel } from "../../shared/constants";
+import { GetBalancePreview, kAnnualNoticeDays, kLongLeaveThreshold, kSickBackdateDays, ShiftDate, ValidateLeaveAvailability } from "../../shared/leave_rules";
 import { ValidateLeaveInput } from "../../shared/validate";
 import type { LeaveRecord, LeaveType } from "../../shared/types";
-import { ApiError, createApplication, getApplication, getApplications, updateApplication } from "../api";
+import { ApiError, CreateApplication, GetApplication, GetApplications, UpdateApplication } from "../api";
 import { useAuth } from "../auth";
 import { ErrorNote, Field, LoadingNote, PageTitle, PrimaryButton, SelectInput, TextArea } from "../components";
-import { LeaveDateInput } from "../LeaveDateInput";
-import { useTitle } from "../useTitle";
+import { LeaveDateInput } from "../leave_date_input";
+import { useTitle } from "../use_title";
+import { GetLeaveTypeClass, LeaveTypeLabel } from "../leave_type_label";
 
 /**
  * Summary: Render and validate a new request or a pending request replacement.
@@ -22,8 +23,8 @@ import { useTitle } from "../useTitle";
 export function ApplicationForm({ mode }: { mode: "new" | "edit" }) {
   useTitle(mode === "new" ? "New request" : "Edit request");
   const { id } = useParams();
-  const navigate = useNavigate();
-  const { refresh } = useAuth();
+  const Navigate = useNavigate();
+  const { refresh: Refresh } = useAuth();
   const [leave_type, SetLeaveType] = useState<LeaveType>("annual");
   const [start_date, SetStartDate] = useState("");
   const [end_date, SetEndDate] = useState("");
@@ -50,9 +51,9 @@ export function ApplicationForm({ mode }: { mode: "new" | "edit" }) {
     SetRevision(null);
     SetConflicted(false);
     const existing_request = mode === "edit"
-      ? (id ? getApplication(id) : Promise.reject(new Error("Missing request ID.")))
+      ? (id ? GetApplication(id) : Promise.reject(new Error("Missing request ID.")))
       : Promise.resolve(null);
-    Promise.all([getApplications(), existing_request])
+    Promise.all([GetApplications(), existing_request])
       .then(([history, record]) => {
         if (!active) return;
         SetRecords(history.applications);
@@ -75,13 +76,13 @@ export function ApplicationForm({ mode }: { mode: "new" | "edit" }) {
     return () => { active = false; };
   }, [mode, id, reload_index]);
 
-  const today = hongKongToday();
+  const today = HongKongToday();
   const minimum_start = leave_type === "annual" ? ShiftDate(today, kAnnualNoticeDays) : "1900-01-01";
   const minimum_end = leave_type === "annual" ? minimum_start : ShiftDate(today, -kSickBackdateDays);
   const period = { leave_type, start_date, end_date };
   const excluded_id = mode === "edit" ? id ?? null : null;
   const balances = records ? GetBalancePreview(period, records, excluded_id) : [];
-  const needs_reason = isIsoDate(start_date) && isIsoDate(end_date) && dayCount(start_date, end_date) > kLongLeaveThreshold;
+  const needs_reason = IsIsoDate(start_date) && IsIsoDate(end_date) && DayCount(start_date, end_date) > kLongLeaveThreshold;
 
   /**
    * Summary: Save a request after checking its input and the latest own history.
@@ -102,7 +103,7 @@ export function ApplicationForm({ mode }: { mode: "new" | "edit" }) {
     }
     SetPending(true);
     try {
-      const history = await getApplications();
+      const history = await GetApplications();
       SetRecords(history.applications);
       const refusal = ValidateLeaveAvailability(period, history.applications, excluded_id);
       if (refusal) {
@@ -111,14 +112,14 @@ export function ApplicationForm({ mode }: { mode: "new" | "edit" }) {
       }
       if (mode === "edit") {
         if (!id || revision === null) throw new Error("Missing request ID or revision.");
-        await updateApplication(id, { ...body, revision });
+        await UpdateApplication(id, { ...body, revision });
       } else {
-        await createApplication(body);
+        await CreateApplication(body);
       }
-      await refresh();
-      navigate("/applications");
+      await Refresh();
+      Navigate("/applications");
     } catch (caught) {
-      if (caught instanceof ApiError && caught.status === 409) SetConflicted(true);
+      if (caught instanceof ApiError && caught.status_ === 409) SetConflicted(true);
       SetError(caught instanceof ApiError ? caught.message : "The request could not be saved.");
     } finally {
       SetPending(false);
@@ -132,7 +133,7 @@ export function ApplicationForm({ mode }: { mode: "new" | "edit" }) {
         lede="Leave is taken in whole days. The length is every calendar day from the start date through the end date."
       />
       {loading ? <LoadingNote label="Loading the request and your balance…" /> : null}
-      {error ? <div className="mb-4"><ErrorNote message={error} onRetry={records === null ? () => SetReloadIndex((index) => index + 1) : undefined} /></div> : null}
+      {error ? <div className="mb-4"><ErrorNote message={error} on_retry={records === null ? () => SetReloadIndex((index) => index + 1) : undefined} /></div> : null}
       {conflicted ? (
         <div className="mb-4 text-sm">
           <p>Reloading replaces your unsaved changes with the latest request.</p>
@@ -145,17 +146,17 @@ export function ApplicationForm({ mode }: { mode: "new" | "edit" }) {
       {!loading && !locked && records !== null ? (
         <form onSubmit={OnSubmit} className="space-y-4 rounded-lg border border-rule bg-card p-5">
           <Field label="Leave type">
-            <SelectInput value={leave_type} onChange={(event) => SetLeaveType(event.target.value as LeaveType)}>
-              <option value="annual">{LEAVE_LABEL.annual}</option>
-              <option value="sick">{LEAVE_LABEL.sick}</option>
+            <SelectInput className={`${GetLeaveTypeClass(leave_type)} font-medium`} value={leave_type} onChange={(event) => SetLeaveType(event.target.value as LeaveType)}>
+              <option className={GetLeaveTypeClass("annual")} value="annual">{kLeaveLabel.annual}</option>
+              <option className={GetLeaveTypeClass("sick")} value="sick">{kLeaveLabel.sick}</option>
             </SelectInput>
           </Field>
           <div className="grid gap-4 sm:grid-cols-2">
-            <LeaveDateInput label="Start date" value={start_date} today={today} OnChange={SetStartDate}
+            <LeaveDateInput label="Start date" value={start_date} today={today} on_change={SetStartDate}
               limits={{ minimum_date: minimum_start, maximum_date: "9998-12-31",
                 annual_notice_date: leave_type === "annual" ? minimum_start : undefined,
                 minimum_message: "This date is outside the supported date range." }} />
-            <LeaveDateInput label="End date" value={end_date} today={today} OnChange={SetEndDate}
+            <LeaveDateInput label="End date" value={end_date} today={today} on_change={SetEndDate}
               limits={{ minimum_date: start_date > minimum_end ? start_date : minimum_end, maximum_date: "9998-12-31",
                 annual_notice_date: leave_type === "annual" ? minimum_start : undefined,
                 minimum_message: start_date > minimum_end
@@ -171,7 +172,7 @@ export function ApplicationForm({ mode }: { mode: "new" | "edit" }) {
             ))}
             {mode === "edit" && balances.length > 0 ? <p className="mt-1">Available days include this request's existing reservation.</p> : null}
           </div>
-          <p className="text-sm text-stone-600">Annual leave needs 2 days' notice. Sick leave may end up to 7 days ago. Pending and approved leave reserve your yearly balance.</p>
+          <p className="text-sm text-stone-600"><LeaveTypeLabel leave_type="annual" /> needs 2 days' notice. <LeaveTypeLabel leave_type="sick" /> may end up to 7 days ago. Pending and approved leave reserve your yearly balance.</p>
           <Field label={needs_reason ? "Reason (required for more than 4 days)" : "Reason (optional for up to 4 days)"}>
             <TextArea required={needs_reason} maxLength={500} value={reason} onChange={(event) => SetReason(event.target.value)} />
           </Field>
@@ -195,8 +196,8 @@ export function ApplicationForm({ mode }: { mode: "new" | "edit" }) {
  */
 function PreviewDays(start_date: string, end_date: string): string {
   if (!start_date || !end_date) return "Enter the start and end dates to see how many days this request covers.";
-  if (!isIsoDate(start_date) || !isIsoDate(end_date)) return "Use a real calendar date.";
+  if (!IsIsoDate(start_date) || !IsIsoDate(end_date)) return "Use a real calendar date.";
   if (end_date < start_date) return "The end date is before the start date.";
-  const days = dayCount(start_date, end_date);
+  const days = DayCount(start_date, end_date);
   return days === 1 ? "1 day" : `${days} days`;
 }

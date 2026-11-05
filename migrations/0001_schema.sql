@@ -1,3 +1,5 @@
+-- Create the initial tables without a stored leave duration.
+-- Leave length is derived from start_date and end_date whenever it is needed.
 CREATE TABLE staff (
   id TEXT PRIMARY KEY,
   email TEXT NOT NULL UNIQUE,
@@ -19,7 +21,6 @@ CREATE TABLE leave_application (
   leave_type TEXT NOT NULL CHECK (leave_type IN ('annual', 'sick')),
   start_date TEXT NOT NULL,
   end_date TEXT NOT NULL,
-  day_count INTEGER NOT NULL CHECK (day_count >= 1),
   reason TEXT NOT NULL,
   status TEXT NOT NULL CHECK (status IN ('Pending', 'Approved', 'Disapproved', 'Cancelled')),
   archived INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0, 1)),

@@ -1,16 +1,23 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Navigate } from "react-router-dom";
-import { COMPANY_DOMAIN } from "../../shared/constants";
-import { ApiError, signIn } from "../api";
+import { kCompanyDomain } from "../../shared/constants";
+import { ApiError, SignIn as SignInRequest } from "../api";
 import { useAuth } from "../auth";
 import { ErrorNote, Field, PrimaryButton, TextInput } from "../components";
 
+/**
+ * Summary: Render the sign-in form or redirect an authenticated account.
+ * Parameters: None; reads the surrounding authentication context.
+ * Return Value: The form, session-loading message, or home redirect.
+ * Side Effects & Constraints: Sets the document title and stores form values only in component
+ * state.
+ */
 export function SignIn() {
-  const { me, ready, refresh } = useAuth();
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [pending, setPending] = useState(false);
+  const { me, ready, refresh: Refresh } = useAuth();
+  const [email, SetEmail] = useState("");
+  const [password, SetPassword] = useState("");
+  const [error, SetError] = useState<string | null>(null);
+  const [pending, SetPending] = useState(false);
 
   useEffect(() => {
     document.title = "Sign in · LeaveFlowSE";
@@ -19,17 +26,24 @@ export function SignIn() {
   if (!ready) return <p className="p-8 text-sm text-stone-600">Checking your session…</p>;
   if (me) return <Navigate to="/" replace />;
 
-  async function onSubmit(event: FormEvent) {
+  /**
+   * Summary: Sign in using the entered company credentials.
+   * Parameters: event is the non-null form submission event.
+   * Return Value: Resolves after refreshing authentication or displaying an error.
+   * Side Effects & Constraints: Prevents form navigation, posts credentials, and updates
+   * pending/error state.
+   */
+  async function OnSubmit(event: FormEvent) {
     event.preventDefault();
-    setPending(true);
-    setError(null);
+    SetPending(true);
+    SetError(null);
     try {
-      await signIn(email, password);
-      await refresh();
+      await SignInRequest(email, password);
+      await Refresh();
     } catch (caught) {
-      setError(caught instanceof ApiError ? caught.message : "LeaveFlowSE could not sign you in.");
+      SetError(caught instanceof ApiError ? caught.message : "LeaveFlowSE could not sign you in.");
     } finally {
-      setPending(false);
+      SetPending(false);
     }
   }
 
@@ -46,7 +60,7 @@ export function SignIn() {
         <p className="text-sm text-[#cbbba6]">Hong Kong · Asia/Hong_Kong</p>
       </section>
       <section className="flex items-center justify-center px-6 py-12">
-        <form onSubmit={onSubmit} className="w-full max-w-sm space-y-4">
+        <form onSubmit={OnSubmit} className="w-full max-w-sm space-y-4">
           <div>
             <h2 className="font-serif text-3xl">Sign in</h2>
             <p className="mt-2 text-sm text-stone-700">
@@ -54,13 +68,13 @@ export function SignIn() {
             </p>
           </div>
           {error ? <ErrorNote message={error} /> : null}
-          <Field label="Company email" hint={`Addresses end in @${COMPANY_DOMAIN}.`}>
+          <Field label="Company email" hint={`Addresses end in @${kCompanyDomain}.`}>
             <TextInput
               type="email"
               autoComplete="username"
               required
               value={email}
-              onChange={(event) => setEmail(event.target.value)}
+              onChange={(event) => SetEmail(event.target.value)}
             />
           </Field>
           <Field label="Password">
@@ -69,7 +83,7 @@ export function SignIn() {
               autoComplete="current-password"
               required
               value={password}
-              onChange={(event) => setPassword(event.target.value)}
+              onChange={(event) => SetPassword(event.target.value)}
             />
           </Field>
           <PrimaryButton type="submit" disabled={pending}>

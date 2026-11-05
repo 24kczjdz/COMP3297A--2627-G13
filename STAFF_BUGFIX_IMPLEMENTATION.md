@@ -2,6 +2,8 @@
 
 Leave balances are calculated from the dates of the employee's Pending and Approved requests, with each day charged to its own calendar year. The form previews and validates the proposed change, the database enforces the same rules atomically, and the dashboard displays the resulting balance and request history.
 
+The original staff fix upgraded an existing table through migration `0004`. The later [fresh-database change](FRESH_DATABASE_IMPLEMENTATION.md) makes the initial table date-only from `0001`; the original upgrade files now live in `database/legacy-migrations`. Historical verification counts below describe their stated test dates.
+
 ## Starting point and scope
 
 The checked-out repository already contained migration `0003`, which implements calendar-year balance views, atomic overlap/quota checks, and lifecycle rules. Short-leave reasons were already optional in its validator and form. Those correct rules were retained and regression-tested instead of being replaced with mutable balance counters.
@@ -24,7 +26,7 @@ A request from 30 December to 3 January charges two days to the first year and t
 Involved code:
 
 - Existing SQL views `leave_application_year` and `leave_balance`: authoritative live allocations and balances; retained unchanged.
-- `GetYearAllocations()` in `src/shared/leaveRules.ts`: splits inclusive dates for the form preview, including leap days.
+- `GetYearAllocations()` in `src/shared/leave_rules.ts`: splits inclusive dates for the form preview, including leap days.
 - `GetBalancePreview()`: derives reservations from the applicant's history, ignores Cancelled/Disapproved records, and excludes the edited request by ID. It does not trust the response's `dayCount` field to calculate balances.
 - `ApplicationForm()` and its `OnSubmit()`: show each year's available/requested/resulting days, reload history before checking availability, save, then refresh the authenticated profile.
 - `Applications.OnCancel()`: refreshes the profile and history after cancellation.
@@ -38,13 +40,14 @@ Only the start and end dates are saved. Duration is calculated whenever a rule, 
 
 Involved code:
 
-- New `migrations/0004_derive_leave_duration.sql`: drops the stored `day_count` column and recreates the four triggers that referenced it. All other request fields, IDs, relationships, indexes, notices, and the existing yearly views are preserved.
+- Current `migrations/0001_schema.sql` omits the stored `day_count` column from the first table creation. Current `0002` seeds dates only, and `0003` installs date-derived rules. Current `0004` is a schema check; it does not remove a column from new databases.
+- The original `database/legacy-migrations/0004_derive_leave_duration.sql` still removes the obsolete column from older databases and recreates the four affected triggers. Other request fields, IDs, relationships, indexes, notices, and yearly views are preserved.
 - `kLeaveColumns` in `src/worker/index.ts`: projects `CAST(julianday(end_date) - julianday(start_date) + 1 AS INTEGER) AS day_count` on reads.
 - `POST /api/applications` and `PATCH /api/applications/:id`: no longer insert or update a duration.
 - Existing `toLeave()`: retains the JSON `dayCount` field so the existing history and approver UI continue to work. It receives a calculated query result, not a stored column.
 - `leave_update_state` and `leave_decision_notification`: calculate the long-leave threshold and notification length directly from dates.
 
-Migrations `0001` through `0003` remain unchanged because they may already have been applied. The new migration was tested both for preserving existing fields and for refusing attempts to write a nonexistent duration column.
+The original `0001` through `0004` are preserved unchanged under `database/legacy-migrations` for existing databases. Fresh installations use the revised initialization files under `migrations`; see the fresh-database report for tests of both paths.
 
 ## 3. Optional reasons and the four-day threshold
 
@@ -52,7 +55,7 @@ A reason is optional for one through four calendar days, and required from five 
 
 Involved code:
 
-- `kLongLeaveThreshold` in `src/shared/leaveRules.ts`: the shared four-day boundary.
+- `kLongLeaveThreshold` in `src/shared/leave_rules.ts`: the shared four-day boundary.
 - `ApplicationForm()`: conditional reason label and `required` attribute.
 - `ValidateLeaveInput()` in `src/shared/validate.ts`: preserves optional short reasons, normalizes absent/null/blank reasons to an empty string, and enforces the 500-character limit and long-leave rule.
 - SQL triggers `leave_validate_insert` and `leave_validate_edit`: repeat the long-leave check using the date-derived duration.
@@ -69,10 +72,11 @@ Involved code:
 - `ValidateLeaveDates()`: validates real, ordered dates and the notice/backdating boundaries.
 - `ValidateLeaveInput()`: calls the same date validation on both client submission and Worker requests.
 - `ApplicationForm()`: annual start-date minimum, end-date minimum, and the database's supported date bounds.
-- `LeaveDateInput()` in `src/client/LeaveDateInput.tsx`: preserves native date entry and min/max validation while providing a custom calendar popup. Individual days blocked by the annual notice rule show **"You have to apply 2 days in advance."** on mouse hover, keyboard focus, or click. Those days use `aria-disabled` and an explicit selection guard, so they can explain the restriction without becoming selectable.
+- `LeaveDateInput()` in `src/client/leave_date_input.tsx`: preserves native date entry and min/max validation while providing a custom calendar popup. Individual days blocked by the annual notice rule show **"You have to apply 2 days in advance."** on mouse hover, keyboard focus, or click. Those days use `aria-disabled` and an explicit selection guard, so they can explain the restriction without becoming selectable.
+- The custom calendar trigger has an opaque, fixed-width background over the input's trailing edge. Removing the extra right padding keeps Firefox's native picker underneath that trigger, so each field shows one calendar icon even when the browser ignores the WebKit picker-hiding rule. Native date entry, validation, and popup behavior are preserved.
 - `GetDateRestriction()`: distinguishes the annual notice rule from an end date before the start date and sick-leave backdating. Sick leave never receives the annual notice message.
 - `GetMonthDays()`: builds UTC calendar cells, including leap days. The popup supports month navigation, arrow-key date navigation, Escape, and closing when focus/pointer moves outside. The tooltip sits above the calendar so it does not move the day cells under the pointer.
-- Existing SQL notice/backdating checks, preserved in `0004`: use `date('now', '+8 hours', ...)` as the authoritative clock.
+- SQL notice/backdating checks in current `0003` and archived `0004`: use `date('now', '+8 hours', ...)` as the authoritative clock.
 
 The browser clock helps with early feedback; the Worker/database date determines whether a request is accepted. Tests include today, yesterday, 27 days ago, tomorrow, exactly two days ahead, Hong Kong midnight, and New Year.
 
@@ -82,7 +86,7 @@ A new or edited request cannot share any calendar day with the applicant's Pendi
 
 Involved code:
 
-- `ValidateLeaveAvailability()` in `src/shared/leaveRules.ts`: detects inclusive overlaps and any negative projected yearly balance; it ignores the edited request's own old range.
+- `ValidateLeaveAvailability()` in `src/shared/leave_rules.ts`: detects inclusive overlaps and any negative projected yearly balance; it ignores the edited request's own old range.
 - `ApplicationForm.OnSubmit()`: checks the latest own history before attempting a write and displays a specific refusal.
 - SQL triggers `leave_validate_insert` and `leave_validate_edit`: enforce overlap and per-year limits atomically, including clients that bypass browser validation.
 - Existing Worker ownership checks and revision checks: retained to prevent changing another employee's record or overwriting a concurrent update.
@@ -95,10 +99,10 @@ Home now includes the employee's leave history and its corresponding statuses al
 
 Involved code:
 
-- `Home()` and existing `QuotaCard()` in `src/client/pages/Home.tsx`: retain entitlement, remaining balance, and taken-day values. The separate Pending/Approved day totals are omitted from both quota cards because specification section 3 does not require that breakdown. Leave-history status badges and the approver's pending application count remain visible as required.
+- `Home()` and existing `QuotaCard()` in `src/client/pages/home_page.tsx`: retain entitlement, remaining balance, and taken-day values. The separate Pending/Approved day totals are omitted from both quota cards because specification section 3 does not require that breakdown. Leave-history status badges and the approver's pending application count remain visible as required.
 - New `LeaveHistory()`: loads the authenticated employee's complete history, with loading, empty, error, and retry states. Cleanup ignores late responses after unmount.
 - Existing `LeaveList()` and `StatusBadge()`: reused without changing their layout or status logic.
-- `Profile()` in `src/client/pages/Profile.tsx`: displays separate annual/sick quota and remaining rows.
+- `Profile()` in `src/client/pages/profile_page.tsx`: displays separate annual/sick quota and remaining rows.
 - Existing `buildMe()` and `leave_balance.taken_days`: only approved days from this year through today count as taken; pending and future days are excluded.
 
 The approver's dashboard retains the count of all applications awaiting approval. History requests remain scoped by the server to the signed-in applicant.
@@ -139,9 +143,13 @@ npx wrangler dev --local --ip 127.0.0.1 --port 43219 --persist-to .wrangler/staf
 npm run acceptance
 ```
 
+### Firefox calendar rendering follow-up (5 November 2026)
+
+`npm run typecheck`, `npm run build`, and `git diff --check` passed after the calendar trigger layout adjustment. An isolated headless Firefox render of the actual `LeaveDateInput` component confirmed one visible icon in both an empty and a populated date field. This follow-up checked rendering; it did not repeat the earlier interactive calendar smoke test.
+
 ## Applying the change to an existing installation
 
-Run all pending migrations and deploy the matching Worker together. Migration `0004` requires the checked-in `0003` schema; if a different manual database update already removed `day_count`, reconcile that installation's schema/migration history first instead of blindly replaying this migration. See `database/README.md` for backup, preflight, and upgrade steps.
+Run pending migrations and deploy the matching Worker together. Existing databases that already applied the original `0004` continue normally. Databases still storing `day_count` must first use the archived upgrade path; do not apply the archived column-removal script to a date-only table. See `database/README.md` for backup, preflight, and upgrade steps.
 
 No remote migration, deployment, or Git commit was performed for this change.
 

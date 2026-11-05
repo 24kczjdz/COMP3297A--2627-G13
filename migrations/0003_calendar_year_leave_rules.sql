@@ -1,4 +1,4 @@
--- Upgrade existing D1 installations without rewriting applied migrations or deleting data.
+-- Install calendar-year rules for the initial date-only leave schema.
 -- Group 13 policy: 18 annual / 14 sick days per calendar year, Hong Kong dates.
 -- Pending and Approved requests consume quota. Rejection/cancellation releases it.
 -- Existing history is preserved; submission-time rules apply to new requests/edits.
@@ -101,7 +101,7 @@ BEGIN
         AND date('now', '+8 hours') < OLD.start_date)
   ) THEN RAISE(ABORT, 'leave:transition') END;
   SELECT CASE WHEN (NEW.leave_type != OLD.leave_type OR NEW.start_date != OLD.start_date
-    OR NEW.end_date != OLD.end_date OR NEW.day_count != OLD.day_count OR NEW.reason != OLD.reason)
+    OR NEW.end_date != OLD.end_date OR NEW.reason != OLD.reason)
     AND NOT (OLD.status = 'Pending' AND NEW.status = 'Pending')
     THEN RAISE(ABORT, 'leave:edit_pending') END;
   SELECT CASE WHEN NEW.archived != CASE WHEN NEW.status IN ('Approved', 'Disapproved') THEN 1 ELSE 0 END
@@ -111,7 +111,7 @@ BEGIN
   SELECT CASE WHEN NEW.status IN ('Approved', 'Disapproved') AND (
     NEW.decided_at IS NULL OR NEW.decided_by IS NULL
     OR NOT EXISTS (SELECT 1 FROM staff WHERE id = NEW.decided_by AND role = 'approver')
-    OR (NEW.day_count > 4 AND length(trim(NEW.decision_comment)) = 0)
+    OR (CAST(julianday(NEW.end_date) - julianday(NEW.start_date) + 1 AS INTEGER) > 4 AND length(trim(NEW.decision_comment)) = 0)
   ) THEN RAISE(ABORT, 'leave:decision_comment') END;
   SELECT CASE WHEN NEW.status = 'Pending' AND (
     NEW.decided_at IS NOT NULL OR NEW.decided_by IS NOT NULL
@@ -130,10 +130,8 @@ BEGIN
     OR NEW.start_date < '1900-01-01' OR NEW.end_date > '9998-12-31'
     OR date(NEW.start_date, '+0 days') IS NOT NEW.start_date
     OR date(NEW.end_date, '+0 days') IS NOT NEW.end_date OR NEW.end_date < NEW.start_date
-    OR typeof(NEW.day_count) != 'integer'
-    OR NEW.day_count != CAST(julianday(NEW.end_date) - julianday(NEW.start_date) + 1 AS INTEGER)
     THEN RAISE(ABORT, 'leave:dates') END;
-  SELECT CASE WHEN length(NEW.reason) > 500 OR (NEW.day_count > 4 AND length(trim(NEW.reason)) = 0)
+  SELECT CASE WHEN length(NEW.reason) > 500 OR (CAST(julianday(NEW.end_date) - julianday(NEW.start_date) + 1 AS INTEGER) > 4 AND length(trim(NEW.reason)) = 0)
     THEN RAISE(ABORT, 'leave:reason') END;
   SELECT CASE WHEN NEW.leave_type = 'annual' AND NEW.start_date < date('now', '+8 hours', '+2 days')
     THEN RAISE(ABORT, 'leave:annual_notice') END;
@@ -143,7 +141,7 @@ BEGIN
     SELECT 1 FROM leave_application a WHERE a.applicant_id = NEW.applicant_id AND a.id != NEW.id
       AND a.status IN ('Pending', 'Approved') AND a.start_date <= NEW.end_date AND a.end_date >= NEW.start_date
   ) THEN RAISE(ABORT, 'leave:overlap') END;
-  -- Exclude the edited request: only its replacement allocation should be charged.
+  -- Add the proposed allocation to the applicant's existing active requests.
   -- This check runs inside the write statement, so competing submissions cannot
   -- both consume the same remaining quota after a separate stale balance read.
   SELECT CASE WHEN EXISTS (
@@ -162,17 +160,15 @@ BEGIN
   ) THEN RAISE(ABORT, 'leave:balance') END;
 END;
 
-CREATE TRIGGER leave_validate_edit BEFORE UPDATE OF leave_type, start_date, end_date, day_count, reason ON leave_application
+CREATE TRIGGER leave_validate_edit BEFORE UPDATE OF leave_type, start_date, end_date, reason ON leave_application
 WHEN OLD.status = 'Pending' AND NEW.status = 'Pending'
 BEGIN
   SELECT CASE WHEN length(NEW.start_date) != 10 OR length(NEW.end_date) != 10
     OR NEW.start_date < '1900-01-01' OR NEW.end_date > '9998-12-31'
     OR date(NEW.start_date, '+0 days') IS NOT NEW.start_date
     OR date(NEW.end_date, '+0 days') IS NOT NEW.end_date OR NEW.end_date < NEW.start_date
-    OR typeof(NEW.day_count) != 'integer'
-    OR NEW.day_count != CAST(julianday(NEW.end_date) - julianday(NEW.start_date) + 1 AS INTEGER)
     THEN RAISE(ABORT, 'leave:dates') END;
-  SELECT CASE WHEN length(NEW.reason) > 500 OR (NEW.day_count > 4 AND length(trim(NEW.reason)) = 0)
+  SELECT CASE WHEN length(NEW.reason) > 500 OR (CAST(julianday(NEW.end_date) - julianday(NEW.start_date) + 1 AS INTEGER) > 4 AND length(trim(NEW.reason)) = 0)
     THEN RAISE(ABORT, 'leave:reason') END;
   SELECT CASE WHEN NEW.leave_type = 'annual' AND NEW.start_date < date('now', '+8 hours', '+2 days')
     THEN RAISE(ABORT, 'leave:annual_notice') END;
@@ -209,8 +205,8 @@ BEGIN
   VALUES (lower(hex(randomblob(16))), NEW.applicant_id, NEW.id,
     CASE NEW.status WHEN 'Approved' THEN 'approved' ELSE 'disapproved' END,
     CASE NEW.leave_type WHEN 'annual' THEN 'Annual leave' ELSE 'Sick leave' END
-      || ' from ' || NEW.start_date || ' to ' || NEW.end_date || ' (' || NEW.day_count
-      || CASE WHEN NEW.day_count = 1 THEN ' day)' ELSE ' days)' END
+      || ' from ' || NEW.start_date || ' to ' || NEW.end_date || ' (' || CAST(julianday(NEW.end_date) - julianday(NEW.start_date) + 1 AS INTEGER)
+      || CASE WHEN CAST(julianday(NEW.end_date) - julianday(NEW.start_date) + 1 AS INTEGER) = 1 THEN ' day)' ELSE ' days)' END
       || ' was ' || lower(NEW.status) || '.'
       || CASE WHEN NEW.decision_comment = '' THEN '' ELSE ' Comment: ' || NEW.decision_comment END,
     NEW.decided_at, NULL);

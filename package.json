@@ -7,10 +7,10 @@
     "build": "vite build",
     "dev": "npm run build && wrangler dev --port 43219 --ip 0.0.0.0",
     "migrate:local": "wrangler d1 migrations apply leaveflowse --local",
-    "generate-seed": "node scripts/generate-seed.mjs",
+    "generate-seed": "node scripts/generate_seed.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.worker.json",
-    "test:leave": "node scripts/test-leave.mjs",
-    "test:database": "python3 scripts/test-database.py",
+    "test:leave": "node scripts/test_leave.mjs",
+    "test:database": "python3 scripts/test_database.py",
     "acceptance": "node scripts/acceptance.mjs"
   },
   "dependencies": {
@@ -30,5 +30,8 @@
     "typescript": "^5.7.2",
     "vite": "^6.0.6",
     "wrangler": "^4.14.0"
+  },
+  "engines": {
+    "node": ">=22.16.0"
   }
 }
