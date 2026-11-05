@@ -28,6 +28,8 @@ export function ApplicationForm({ mode }: { mode: "new" | "edit" }) {
   const [start_date, SetStartDate] = useState("");
   const [end_date, SetEndDate] = useState("");
   const [reason, SetReason] = useState("");
+  const [revision, SetRevision] = useState<number | null>(null);
+  const [conflicted, SetConflicted] = useState(false);
   const [records, SetRecords] = useState<LeaveRecord[] | null>(null);
   const [error, SetError] = useState<string | null>(null);
   const [locked, SetLocked] = useState<string | null>(null);
@@ -41,6 +43,12 @@ export function ApplicationForm({ mode }: { mode: "new" | "edit" }) {
     SetError(null);
     SetLocked(null);
     SetRecords(null);
+    SetLeaveType("annual");
+    SetStartDate("");
+    SetEndDate("");
+    SetReason("");
+    SetRevision(null);
+    SetConflicted(false);
     const existing_request = mode === "edit"
       ? (id ? getApplication(id) : Promise.reject(new Error("Missing request ID.")))
       : Promise.resolve(null);
@@ -53,6 +61,7 @@ export function ApplicationForm({ mode }: { mode: "new" | "edit" }) {
         SetStartDate(record.startDate);
         SetEndDate(record.endDate);
         SetReason(record.reason);
+        SetRevision(record.revision);
         if (record.status !== "Pending") {
           SetLocked(`This request is ${record.status}. It can be changed only while it is Pending.`);
         }
@@ -83,7 +92,7 @@ export function ApplicationForm({ mode }: { mode: "new" | "edit" }) {
    */
   async function OnSubmit(event: FormEvent) {
     event.preventDefault();
-    if (pending || loading || locked || !records) return;
+    if (pending || loading || locked || conflicted || !records) return;
     SetError(null);
     const body = { leaveType: leave_type, startDate: start_date, endDate: end_date, reason };
     const parsed = ValidateLeaveInput(body);
@@ -101,14 +110,15 @@ export function ApplicationForm({ mode }: { mode: "new" | "edit" }) {
         return;
       }
       if (mode === "edit") {
-        if (!id) throw new Error("Missing request ID.");
-        await updateApplication(id, body);
+        if (!id || revision === null) throw new Error("Missing request ID or revision.");
+        await updateApplication(id, { ...body, revision });
       } else {
         await createApplication(body);
       }
       await refresh();
       navigate("/applications");
     } catch (caught) {
+      if (caught instanceof ApiError && caught.status === 409) SetConflicted(true);
       SetError(caught instanceof ApiError ? caught.message : "The request could not be saved.");
     } finally {
       SetPending(false);
@@ -123,6 +133,14 @@ export function ApplicationForm({ mode }: { mode: "new" | "edit" }) {
       />
       {loading ? <LoadingNote label="Loading the request and your balance…" /> : null}
       {error ? <div className="mb-4"><ErrorNote message={error} onRetry={records === null ? () => SetReloadIndex((index) => index + 1) : undefined} /></div> : null}
+      {conflicted ? (
+        <div className="mb-4 text-sm">
+          <p>Reloading replaces your unsaved changes with the latest request.</p>
+          <button type="button" className="mt-2 underline" onClick={() => SetReloadIndex((index) => index + 1)}>
+            Reload latest request
+          </button>
+        </div>
+      ) : null}
       {locked ? <div className="mb-4"><ErrorNote message={locked} /></div> : null}
       {!loading && !locked && records !== null ? (
         <form onSubmit={OnSubmit} className="space-y-4 rounded-lg border border-rule bg-card p-5">
@@ -158,7 +176,7 @@ export function ApplicationForm({ mode }: { mode: "new" | "edit" }) {
             <TextArea required={needs_reason} maxLength={500} value={reason} onChange={(event) => SetReason(event.target.value)} />
           </Field>
           <div className="flex items-center gap-4">
-            <PrimaryButton type="submit" disabled={pending}>
+            <PrimaryButton type="submit" disabled={pending || conflicted}>
               {pending ? "Saving…" : mode === "new" ? "Submit request" : "Save changes"}
             </PrimaryButton>
             <Link to="/applications" className="text-sm underline">Back to my leave</Link>

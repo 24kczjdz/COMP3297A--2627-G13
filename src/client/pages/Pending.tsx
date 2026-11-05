@@ -4,9 +4,11 @@ import type { LeaveRecord } from "../../shared/types";
 import { ApiError, decideApplication, getPending } from "../api";
 import { daysLabel, EmptyNote, ErrorNote, Field, leaveLabel, LoadingNote, PageTitle, PrimaryButton, DangerButton, StatusBadge, TextArea } from "../components";
 import { useTitle } from "../useTitle";
+import { useAuth } from "../auth";
 
 export function Pending() {
   useTitle("Pending");
+  const { refresh } = useAuth();
   const [count, setCount] = useState<number | null>(null);
   const [records, setRecords] = useState<LeaveRecord[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -28,12 +30,12 @@ export function Pending() {
     void load();
   }, [load]);
 
-  async function decide(id: string, decision: "approve" | "disapprove") {
-    setBusyId(id);
+  async function decide(record: LeaveRecord, decision: "approve" | "disapprove") {
+    setBusyId(record.id);
     setError(null);
     try {
-      await decideApplication(id, decision, comments[id] ?? "");
-      await load();
+      await decideApplication(record.id, record.revision, decision, comments[record.id] ?? "");
+      await Promise.all([load(), refresh()]);
     } catch (caught) {
       setError(caught instanceof ApiError ? caught.message : "That decision could not be saved.");
     } finally {
@@ -75,7 +77,7 @@ export function Pending() {
               </div>
               <StatusBadge status={record.status} />
             </div>
-            <p className="mt-3 text-sm">{record.reason}</p>
+            <p className="mt-3 whitespace-pre-wrap text-sm">{record.reason}</p>
             <div className="mt-3">
               <Field label={`Comment (${record.dayCount > 4 ? "required" : "optional"})`}>
                 <TextArea maxLength={1000} value={comments[record.id] ?? ""}
@@ -83,10 +85,10 @@ export function Pending() {
               </Field>
             </div>
             <div className="mt-4 flex flex-wrap gap-2">
-              <PrimaryButton type="button" disabled={busyId === record.id} onClick={() => void decide(record.id, "approve")}>
+              <PrimaryButton type="button" disabled={busyId === record.id} onClick={() => void decide(record, "approve")}>
                 Approve
               </PrimaryButton>
-              <DangerButton type="button" disabled={busyId === record.id} onClick={() => void decide(record.id, "disapprove")}>
+              <DangerButton type="button" disabled={busyId === record.id} onClick={() => void decide(record, "disapprove")}>
                 Disapprove
               </DangerButton>
             </div>

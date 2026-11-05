@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { StaticRouter } from 'react-router-dom/server';
 import { GetBalancePreview, GetYearAllocations, ShiftDate, ValidateLeaveAvailability } from '../src/shared/leaveRules';
 import { ValidateLeaveInput } from '../src/shared/validate';
-import { hongKongToday } from '../src/shared/dates';
+import { FormatHongKongTimestampDate, hongKongToday } from '../src/shared/dates';
 import type { LeaveRecord, LeaveStatus, Me } from '../src/shared/types';
 import { Home } from '../src/client/pages/Home';
 import { Profile } from '../src/client/pages/Profile';
@@ -47,6 +47,28 @@ test('five days require a nonblank reason for both leave types', () => {
     }
     assert.equal(ValidateLeaveInput({ ...kInput, leaveType: leave_type, endDate: '2026-11-08', reason: 'Family trip' }, kToday).ok, true);
   }
+});
+
+test('multiline reasons preserve normal text while rejecting control bytes and excess length', () => {
+  for (const separator of ['\n', '\r\n', '\r']) {
+    const result = ValidateLeaveInput({ ...kInput, endDate: '2026-11-08', reason: `Family trip${separator}Travel arrangements` }, kToday);
+    assert.equal(result.ok, true);
+    if (result.ok) assert.equal(result.value.reason, 'Family trip\nTravel arrangements');
+  }
+  for (const reason of ['Text\u0000more', 'Text\u0007more', 'Text\u007Fmore', 'a'.repeat(499) + '\nb']) {
+    assert.equal(ValidateLeaveInput({ ...kInput, reason }, kToday).ok, false);
+  }
+  assert.equal(ValidateLeaveInput({ ...kInput, reason: 'a'.repeat(498) + '\nb' }, kToday).ok, true);
+  assert.equal(ValidateLeaveInput({ ...kInput, reason: 'First\tsecond' }, kToday).ok, true);
+  assert.equal(ValidateLeaveInput({ ...kInput, endDate: '2026-11-08', reason: '\n\t\r\n' }, kToday).ok, false);
+});
+
+test('notification timestamps use the Hong Kong date across midnight and New Year', () => {
+  assert.equal(FormatHongKongTimestampDate('2026-11-03T15:59:59Z'), '3 Nov 2026');
+  assert.equal(FormatHongKongTimestampDate('2026-11-03T16:00:00Z'), '4 Nov 2026');
+  assert.equal(FormatHongKongTimestampDate('2026-11-03T22:12:50.353Z'), '4 Nov 2026');
+  assert.equal(FormatHongKongTimestampDate('2026-12-31T16:00:00Z'), '1 Jan 2027');
+  assert.equal(FormatHongKongTimestampDate('2027-01-01T00:00:00+08:00'), '1 Jan 2027');
 });
 
 test('annual notice rejects past, today, tomorrow and accepts exactly two days', () => {

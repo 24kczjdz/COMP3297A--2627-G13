@@ -61,7 +61,7 @@ equal(status(await staff.request('/api/me'), 200).quota.annual.remaining, 18 - c
 status(await other.request(`/api/applications/${created.id}`), 404);
 status(await other.request(`/api/applications/${created.id}/cancel`, 'POST'), 404);
 const editedBody = annual(shift(today, 2), 3);
-equal(status(await staff.request(`/api/applications/${created.id}`, 'PATCH', editedBody), 200).revision, 1);
+equal(status(await staff.request(`/api/applications/${created.id}`, 'PATCH', { ...editedBody, revision: created.revision }), 200).revision, 1);
 equal(status(await staff.request('/api/me'), 200).quota.annual.remaining, 18 - currentDays(editedBody));
 status(await staff.request('/api/applications', 'POST', sick(shift(today, 3))), 400);
 status(await staff.request('/api/applications', 'POST', annual(shift(today, 3))), 400);
@@ -81,25 +81,25 @@ for (const body of [sick(shift(today, -10), 4), sick(shift(today, -7))]) {
 
 const long = status(await staff.request('/api/applications', 'POST', annual(future, 5, 'Holiday')), 201);
 const decisionPath = `/api/approver/applications/${long.id}/decision`;
-for (const decision of ['approve', 'disapprove']) status(await approver(decisionPath, 'POST', { decision }), 400);
-const race = await Promise.all([1, 2].map(() => approver(decisionPath, 'POST', { decision: 'approve', comment: 'Coverage arranged' })));
+for (const decision of ['approve', 'disapprove']) status(await approver(decisionPath, 'POST', { decision, revision: long.revision }), 400);
+const race = await Promise.all([1, 2].map(() => approver(decisionPath, 'POST', { decision: 'approve', comment: 'Coverage arranged', revision: long.revision })));
 equal(race.filter((r) => r.status === 200).length, 1);
 assert.ok(race.some((r) => [400, 409].includes(r.status)));
 const saved = status(await staff.request(`/api/applications/${long.id}`), 200);
 equal(saved.status, 'Approved'); equal(saved.decisionComment, 'Coverage arranged'); equal(saved.decidedBy, me.id);
-status(await staff.request(`/api/applications/${long.id}`, 'PATCH', annual(future)), 400);
+status(await staff.request(`/api/applications/${long.id}`, 'PATCH', { ...annual(future), revision: saved.revision }), 400);
 const notices = status(await staff.request('/api/notifications'), 200).notifications.filter((n) => n.applicationId === long.id);
 equal(notices.length, 1); assert.match(notices[0].message, /Coverage arranged/);
 equal(status(await staff.request('/api/me'), 200).unreadNotifications, 0);
 status(await staff.request('/api/applications', 'POST', annual(shift(future, 4))), 400);
 status(await staff.request(`/api/applications/${long.id}/cancel`, 'POST'), 200);
 const toReject = status(await staff.request('/api/applications', 'POST', body), 201);
-status(await approver(`/api/approver/applications/${toReject.id}/decision`, 'POST', { decision: 'disapprove' }), 200);
+status(await approver(`/api/approver/applications/${toReject.id}/decision`, 'POST', { decision: 'disapprove', revision: toReject.revision }), 200);
 equal(status(await staff.request('/api/me'), 200).quota.annual.remaining, 18);
 
 const todaySick = status(await staff.request('/api/applications', 'POST', sick(today)), 201);
 equal(status(await staff.request('/api/me'), 200).quota.sick.taken, 0);
-status(await approver(`/api/approver/applications/${todaySick.id}/decision`, 'POST', { decision: 'approve' }), 200);
+status(await approver(`/api/approver/applications/${todaySick.id}/decision`, 'POST', { decision: 'approve', revision: todaySick.revision }), 200);
 const afterSick = status(await staff.request('/api/me'), 200);
 equal(afterSick.quota.sick.taken, 1); equal(afterSick.quota.sick.remaining, 13);
 status(await staff.request(`/api/applications/${todaySick.id}/cancel`, 'POST'), 400);
@@ -112,7 +112,7 @@ equal(submissions.filter((r) => r.status === 201).length, 1);
 const overQuota = submissions.find((r) => r.status !== 201);
 status(overQuota, 400); assert.match(overQuota.data.error, /balance/);
 const reserved = submissions.find((r) => r.status === 201).data;
-status(await quotaStaff.request(`/api/applications/${reserved.id}`, 'PATCH', annual(reserved.startDate, 19, 'Too long')), 400);
+status(await quotaStaff.request(`/api/applications/${reserved.id}`, 'PATCH', { ...annual(reserved.startDate, 19, 'Too long'), revision: reserved.revision }), 400);
 const queue = status(await approver('/api/approver/pending'), 200);
 equal(queue.count, queue.applications.length);
 equal(queue.applications.map((r) => r.startDate), queue.applications.map((r) => r.startDate).toSorted());
@@ -127,7 +127,7 @@ for (const reason of [undefined, null, '', '   ']) {
   equal(short_leave.reason, '');
   equal(short_leave.dayCount, 4);
   status(await boundary_staff.request(`/api/applications/${short_leave.id}`, 'PATCH',
-    annual(request_body.startDate, 5, reason)), 400);
+    { ...annual(request_body.startDate, 5, reason), revision: short_leave.revision }), 400);
   equal(status(await boundary_staff.request(`/api/applications/${short_leave.id}`), 200).dayCount, 4);
   status(await boundary_staff.request(`/api/applications/${short_leave.id}/cancel`, 'POST'), 200);
 }
@@ -140,13 +140,51 @@ const next_year_reservation = status(await boundary_staff.request('/api/applicat
   annual(`${year + 2}-02-01`, 15, 'Remaining next year quota')), 201);
 status(await boundary_staff.request('/api/applications', 'POST', annual(`${year + 2}-03-01`)), 400);
 status(await boundary_staff.request(`/api/applications/${cross_year.id}`, 'PATCH',
-  annual(cross_year_start, 6, 'One extra next year day')), 400);
+  { ...annual(cross_year_start, 6, 'One extra next year day'), revision: cross_year.revision }), 400);
 equal(status(await boundary_staff.request(`/api/applications/${cross_year.id}`), 200).dayCount, 5);
 status(await boundary_staff.request(`/api/applications/${next_year_reservation.id}`, 'PATCH',
-  annual(cross_year_start, 1)), 400);
+  { ...annual(cross_year_start, 1), revision: next_year_reservation.revision }), 400);
 status(await boundary_staff.request(`/api/applications/${cross_year.id}/cancel`, 'POST'), 200);
 status(await boundary_staff.request(`/api/applications/${next_year_reservation.id}`, 'PATCH',
-  annual(next_year_reservation.startDate, 18, 'Quota released by cancellation')), 200);
+  { ...annual(next_year_reservation.startDate, 18, 'Quota released by cancellation'), revision: next_year_reservation.revision }), 200);
+
+// Browser snapshots must remain authoritative across separate HTTP requests.
+// A fresh server read cannot substitute for the version the user actually saw.
+const revision_staff = await account(5);
+const original = status(await revision_staff.request('/api/applications', 'POST',
+  annual(`${year + 1}-09-01`, 5, 'Family trip\r\nTravel arrangements')), 201);
+equal(original.reason, 'Family trip\nTravel arrangements');
+const old_queue = status(await approver('/api/approver/pending'), 200).applications.find((r) => r.id === original.id);
+const edit_path = `/api/applications/${original.id}`;
+const approve_path = `/api/approver/applications/${original.id}/decision`;
+const replacement = annual(`${year + 1}-10-01`, 5, 'Updated dates\nTravel arrangements');
+for (const revision of [undefined, null, '0', -1, 0.5, Number.MAX_SAFE_INTEGER + 1]) {
+  status(await revision_staff.request(edit_path, 'PATCH', { ...replacement, revision }), 400);
+  status(await approver(approve_path, 'POST', { decision: 'approve', comment: 'Checked', revision }), 400);
+}
+const current = status(await revision_staff.request(edit_path, 'PATCH', { ...replacement, revision: original.revision }), 200);
+equal(current.revision, original.revision + 1);
+status(await revision_staff.request(edit_path, 'PATCH', { ...original, reason: 'Stale tab overwrite' }), 409);
+equal(status(await revision_staff.request(edit_path), 200).reason, replacement.reason);
+for (const decision of ['approve', 'disapprove']) {
+  status(await approver(approve_path, 'POST', { decision, comment: 'Old queue', revision: old_queue.revision }), 409);
+}
+equal(status(await revision_staff.request(edit_path), 200).status, 'Pending');
+equal(status(await revision_staff.request('/api/notifications'), 200).notifications.length, 0);
+for (const comment of ['x'.repeat(1001), 'Invalid\u0000comment']) {
+  status(await approver(approve_path, 'POST', { decision: 'approve', comment, revision: current.revision }), 400);
+}
+const refreshed_queue = status(await approver('/api/approver/pending'), 200).applications.find((r) => r.id === original.id);
+equal(refreshed_queue.startDate, replacement.startDate);
+const multiline_comment = 'Updated dates checked\nCoverage confirmed';
+const approved_revision = status(await approver(approve_path, 'POST', {
+  decision: 'approve', comment: multiline_comment, revision: refreshed_queue.revision,
+}), 200);
+equal(approved_revision.startDate, replacement.startDate);
+equal(approved_revision.decisionComment, multiline_comment);
+const revision_notices = status(await revision_staff.request('/api/notifications'), 200).notifications;
+equal(revision_notices.length, 1);
+assert.ok(revision_notices[0].message.includes(multiline_comment));
 
 status(await staff.request('/api/session', 'DELETE'), 200);
 status(await staff.request('/api/me'), 401);

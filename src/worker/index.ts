@@ -242,7 +242,7 @@ api.post("/applications", async (c) => {
  * Summary: Replace an applicant's pending request under the same submission rules.
  * Parameters: c supplies the signed-in applicant, route ID, and untrusted JSON.
  * Return Value: The updated record, 404 for missing ownership, 400 for a refusal,
- * or 409 when another write changed the record after it was read.
+ * or 409 when the browser's displayed revision is no longer current.
  * Side Effects & Constraints: Updates dates/reason and increments revision in D1;
  * SQL excludes the old reservation and derives the replacement days from dates.
  */
@@ -250,9 +250,17 @@ api.patch("/applications/:id", async (c) => {
   const staff = c.get("staff");
   const existing = await ownApplication(c.env.DB, staff.id, c.req.param("id"));
   if (!existing) return c.json({ error: "That application is not on your record." }, 404);
+  const body = await readJson(c);
+  const revision = body?.revision;
+  if (typeof revision !== "number" || !Number.isSafeInteger(revision) || revision < 0) {
+    return c.json({ error: "Reload the request before saving changes." }, 400);
+  }
+  if (revision !== existing.revision) {
+    return c.json({ error: "The request changed. Reload it and try again." }, 409);
+  }
   const refusal = assertCanModify(existing.status);
   if (refusal) return c.json({ error: refusal }, 400);
-  const parsed = ValidateLeaveInput(await readJson(c));
+  const parsed = ValidateLeaveInput(body);
   if (!parsed.ok) return c.json({ error: parsed.error }, 400);
   const now = new Date().toISOString();
   const result = await c.env.DB.prepare(
@@ -269,7 +277,7 @@ api.patch("/applications/:id", async (c) => {
       now,
       existing.id,
       staff.id,
-      existing.revision,
+      revision,
     )
     .run();
   if (result.meta.changes === 0) return c.json({ error: "The request changed. Reload it and try again." }, 409);
@@ -436,13 +444,20 @@ api.post("/approver/applications/:id/decision", async (c) => {
   }
   const existing = await applicationById(c.env.DB, c.req.param("id"));
   if (!existing) return c.json({ error: "That application was not found." }, 404);
+  const revision = body?.revision;
+  if (typeof revision !== "number" || !Number.isSafeInteger(revision) || revision < 0) {
+    return c.json({ error: "Reload the queue before deciding this request." }, 400);
+  }
+  if (revision !== existing.revision) {
+    return c.json({ error: "The request changed. Reload the queue and review it again." }, 409);
+  }
   const outcome = decide(existing.status, decision);
   if (!outcome.ok) return c.json({ error: outcome.error }, 400);
   const rawComment = body?.comment ?? "";
-  if (typeof rawComment !== "string" || rawComment.trim().length > 1000 || /[\u0000-\u001F]/.test(rawComment)) {
+  if (typeof rawComment !== "string" || rawComment.trim().length > 1000 || /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/.test(rawComment)) {
     return c.json({ error: "Use a comment of 1000 characters or fewer." }, 400);
   }
-  const comment = rawComment.trim();
+  const comment = rawComment.trim().replace(/\r\n?/g, "\n");
   if (existing.day_count > 4 && !comment) {
     return c.json({ error: "An approver comment is required for leave longer than 4 days." }, 400);
   }
@@ -453,7 +468,7 @@ api.post("/approver/applications/:id/decision", async (c) => {
          revision = revision + 1
      WHERE id = ? AND status = 'Pending' AND revision = ?`,
   )
-    .bind(outcome.status, now, now, comment, c.get("staff").id, existing.id, existing.revision)
+    .bind(outcome.status, now, now, comment, c.get("staff").id, existing.id, revision)
     .run();
   // D1 includes the notification trigger's insert in meta.changes.
   if (result.meta.changes === 0) return c.json({ error: "The request changed. Reload it and try again." }, 409);

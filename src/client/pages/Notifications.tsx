@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { formatLongDate } from "../../shared/dates";
+import { FormatHongKongTimestampDate } from "../../shared/dates";
 import type { Notice } from "../../shared/types";
 import { ApiError, getNotifications } from "../api";
 import { EmptyNote, ErrorNote, LoadingNote, PageTitle } from "../components";
@@ -43,8 +43,8 @@ export function Notifications() {
                 {notice.kind === "approved" ? "Approved" : "Disapproved"}
                 {notice.readAt ? "" : " · New"}
               </p>
-              <p className="mt-1">{notice.message}</p>
-              <p className="mt-1 text-xs text-stone-500">{formatLongDate(notice.createdAt.slice(0, 10))}</p>
+              <p className="mt-1 whitespace-pre-wrap">{notice.message}</p>
+              <p className="mt-1 text-xs text-stone-500">{FormatHongKongTimestampDate(notice.createdAt)}</p>
             </li>
           ))}
         </ul>

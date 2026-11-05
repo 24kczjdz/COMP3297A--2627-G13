@@ -44,3 +44,15 @@ export function formatLongDate(isoDate: string): string {
     timeZone: "UTC",
   }).format(date);
 }
+
+/**
+ * Summary: Display an event timestamp on its Hong Kong calendar date.
+ * Parameters: timestamp is a valid ISO timestamp including its UTC offset.
+ * Return Value: A day/month/year label, including the local midnight rollover.
+ * Side Effects & Constraints: Pure; leave date-only strings use formatLongDate.
+ */
+export function FormatHongKongTimestampDate(timestamp: string): string {
+  return new Intl.DateTimeFormat("en-GB", {
+    day: "numeric", month: "short", year: "numeric", timeZone: "Asia/Hong_Kong",
+  }).format(new Date(timestamp));
+}

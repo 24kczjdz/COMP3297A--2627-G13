@@ -74,7 +74,9 @@ Submission/edit triggers check overlaps and per-year quotas inside the write
 statement. Two simultaneous submissions cannot both use a stale balance read.
 Pending edits exclude their own old allocation from the quota calculation.
 Application updates increment `revision` and include the old revision/status in
-the WHERE clause. A competing change produces HTTP 409 instead of overwriting it.
+the WHERE clause. Edits and decisions use the revision supplied by the browser
+from the record the user saw, not a freshly fetched version. A competing change
+produces HTTP 409 instead of overwriting an edit or approving unseen changes.
 D1 includes trigger writes in `meta.changes`, so only zero means no application
 was updated. A decision's AFTER trigger inserts its notice; either both commit or
 both roll back. The Worker must not insert a second notice.
