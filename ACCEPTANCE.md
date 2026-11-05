@@ -2,6 +2,7 @@
 
 This report records the earlier database-upgrade baseline. For the latest staff-side
 fixes and verification results, see [STAFF_BUGFIX_IMPLEMENTATION.md](STAFF_BUGFIX_IMPLEMENTATION.md).
+For initialization without a stored duration column, see [FRESH_DATABASE_IMPLEMENTATION.md](FRESH_DATABASE_IMPLEMENTATION.md). The original migration files tested by this historical report are preserved under `database/legacy-migrations`.
 
 Validated locally on 1 November 2026 against base commit
 `1db7c0dac08e74433010a148184db806504791e8` and the changes in this package.
@@ -11,7 +12,7 @@ The remote Cloudflare database and deployed application were not modified.
 
 | Check | Outcome | Scope |
 | --- | --- | --- |
-| `python scripts/test-database.py` | 25 tests pass | Actual migrations applied to fresh in-memory SQLite databases with foreign keys enabled |
+| `python scripts/test_database.py` | 25 tests pass | Actual migrations applied to fresh in-memory SQLite databases with foreign keys enabled |
 | `npm run typecheck` | Pass | Client, Worker and shared TypeScript |
 | `npm run build` | Pass | Vite production client build |
 | Wrangler local D1 migrations | Pass | All three migrations execute successfully in local D1 |

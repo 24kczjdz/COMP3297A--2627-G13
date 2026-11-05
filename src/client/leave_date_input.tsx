@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
-import { formatLongDate, isIsoDate } from "../shared/dates";
-import { ShiftDate } from "../shared/leaveRules";
+import { FormatLongDate, IsIsoDate } from "../shared/dates";
+import { ShiftDate } from "../shared/leave_rules";
 
 export const kAnnualNoticeHint = "You have to apply 2 days in advance.";
 const kWeekdays = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -17,7 +17,7 @@ type LeaveDateInputProps = {
   value: string;
   today: string;
   limits: DateLimits;
-  OnChange: (date: string) => void;
+  on_change: (date: string) => void;
 };
 
 /**
@@ -54,13 +54,13 @@ export function GetMonthDays(month: string): (string | null)[] {
 /**
  * Summary: Render a date input with a calendar that explains unavailable days.
  * Parameters: label identifies the field; value is an ISO date or empty; today is
- * the Hong Kong ISO date; limits describes allowed dates; OnChange accepts a date.
+ * the Hong Kong ISO date; limits describes allowed dates; on_change accepts a date.
  * Return Value: The labelled input and, when open, a calendar with day-level hints.
  * Side Effects & Constraints: Updates local UI/focus and invokes OnChange only for
  * selectable calendar days. Installs an outside-pointer listener while open and
  * removes it on cleanup. Native min/max and server validation remain in force.
  */
-export function LeaveDateInput({ label, value, today, limits, OnChange }: LeaveDateInputProps) {
+export function LeaveDateInput({ label, value, today, limits, on_change: OnChange }: LeaveDateInputProps) {
   const input_id = useId();
   const calendar_id = `${input_id}-calendar`;
   const hint_id = `${input_id}-hint`;
@@ -101,7 +101,7 @@ export function LeaveDateInput({ label, value, today, limits, OnChange }: LeaveD
    * Side Effects & Constraints: Updates popup/month/focus state; never changes value.
    */
   function ToggleCalendar() {
-    const initial_date = isIsoDate(value) ? value : today < limits.minimum_date ? limits.minimum_date : today;
+    const initial_date = IsIsoDate(value) ? value : today < limits.minimum_date ? limits.minimum_date : today;
     const bounded_date = initial_date < "1900-01-01" ? "1900-01-01"
       : initial_date > limits.maximum_date ? limits.maximum_date : initial_date;
     SetMonth(bounded_date.slice(0, 7) + "-01");
@@ -182,13 +182,14 @@ export function LeaveDateInput({ label, value, today, limits, OnChange }: LeaveD
     }}>
       <label htmlFor={input_id} className="mb-1 block text-sm font-medium">{label}</label>
       <div className="relative">
+        {/* Keep the native picker at the trailing edge, beneath the opaque custom trigger. */}
         <input id={input_id} type="date" required value={value} min={limits.minimum_date} max={limits.maximum_date}
-          className="leave-date-input w-full rounded-md border border-rule bg-white px-3 py-2 pr-12 text-base text-ink outline-none focus:border-forest focus:ring-2 focus:ring-forest/20"
+          className="leave-date-input w-full rounded-md border border-rule bg-white px-3 py-2 text-base text-ink outline-none focus:border-forest focus:ring-2 focus:ring-forest/20"
           onChange={(event) => OnChange(event.target.value)} />
         <button ref={trigger_ref} type="button" aria-label={`Choose ${label.toLowerCase()}`}
           aria-expanded={open} aria-controls={open ? calendar_id : undefined} aria-haspopup="dialog"
           onClick={ToggleCalendar}
-          className="absolute inset-y-0 right-0 rounded-r-md px-3 text-stone-600 hover:bg-paper focus:outline-none focus:ring-2 focus:ring-forest">
+          className="absolute inset-y-px right-px flex w-11 items-center justify-center rounded-r-md bg-white text-stone-600 hover:bg-paper focus:outline-none focus:ring-2 focus:ring-forest">
           <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-5 w-5">
             <rect x="3" y="5" width="18" height="16" rx="2" /><path d="M16 3v4M8 3v4M3 11h18" />
           </svg>
@@ -210,7 +211,7 @@ export function LeaveDateInput({ label, value, today, limits, OnChange }: LeaveD
               if (!date) return <span key={`blank-${index}`} />;
               const refusal = GetDateRestriction(date, limits);
               return (
-                <button key={date} type="button" data-date={date} aria-label={formatLongDate(date)}
+                <button key={date} type="button" data-date={date} aria-label={FormatLongDate(date)}
                   aria-disabled={Boolean(refusal)} aria-pressed={date === value}
                   aria-current={date === today ? "date" : undefined}
                   aria-describedby={refusal && hint === refusal ? hint_id : undefined}

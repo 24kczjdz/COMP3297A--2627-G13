@@ -1,4 +1,4 @@
-import { dayCount, isIsoDate } from "./dates";
+import { DayCount, IsIsoDate } from "./dates";
 import type { LeaveRecord, LeaveType } from "./types";
 
 export const kLeaveEntitlements = { annual: 18, sick: 14 } as const;
@@ -31,7 +31,7 @@ export function ShiftDate(iso_date: string, days: number): string {
  */
 export function ValidateLeaveDates(period: LeavePeriod, today: string): string | null {
   const { leave_type, start_date, end_date } = period;
-  if (!isIsoDate(start_date) || !isIsoDate(end_date) || start_date < "1900-01-01" || end_date > "9998-12-31") {
+  if (!IsIsoDate(start_date) || !IsIsoDate(end_date) || start_date < "1900-01-01" || end_date > "9998-12-31") {
     return "Enter valid start and end dates between 1900 and 9998.";
   }
   if (end_date < start_date) return "The end date is before the start date.";
@@ -52,13 +52,13 @@ export function ValidateLeaveDates(period: LeavePeriod, today: string): string |
  * to years 1900 through 9998 to match the database's supported range.
  */
 export function GetYearAllocations(start_date: string, end_date: string): YearAllocation[] {
-  if (!isIsoDate(start_date) || !isIsoDate(end_date) || end_date < start_date ||
+  if (!IsIsoDate(start_date) || !IsIsoDate(end_date) || end_date < start_date ||
       start_date < "1900-01-01" || end_date > "9998-12-31") return [];
   const allocations: YearAllocation[] = [];
   for (let year = Number(start_date.slice(0, 4)); year <= Number(end_date.slice(0, 4)); year++) {
     const segment_start = start_date > `${year}-01-01` ? start_date : `${year}-01-01`;
     const segment_end = end_date < `${year}-12-31` ? end_date : `${year}-12-31`;
-    allocations.push({ year, days: dayCount(segment_start, segment_end) });
+    allocations.push({ year, days: DayCount(segment_start, segment_end) });
   }
   return allocations;
 }

@@ -8,7 +8,7 @@ import { spawnSync } from 'node:child_process';
 const test_directory = await mkdtemp(join(tmpdir(), 'leaveflow-regressions-'));
 try {
   const test_path = join(test_directory, 'leave.test.cjs');
-  await build({ entryPoints: ['scripts/test-leave.tsx'], outfile: test_path,
+  await build({ entryPoints: ['scripts/test_leave.tsx'], outfile: test_path,
     bundle: true, platform: 'node', format: 'cjs', jsx: 'automatic', logLevel: 'warning' });
   const result = spawnSync(process.execPath, ['--test', test_path], { stdio: 'inherit' });
   if (result.error) throw result.error;

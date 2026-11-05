@@ -3,6 +3,8 @@
 @tailwind utilities;
 
 :root {
+  --leave-annual-color: #0f766e;
+  --leave-sick-color: #7c3aed;
   color: #241c15;
   background: #f3efe6;
   font-family: Outfit, "Avenir Next", "Segoe UI", sans-serif;
@@ -22,6 +24,15 @@ textarea {
 
 ::selection {
   background: #d7ebe3;
+}
+
+/* Shared text and chart colors identify leave types without changing their rules. */
+.leave-type-annual {
+  color: var(--leave-annual-color);
+}
+
+.leave-type-sick {
+  color: var(--leave-sick-color);
 }
 
 /* The custom calendar provides per-day hints; retain native date entry/validation. */
