@@ -156,6 +156,11 @@ must supply their own account and database IDs; repository access does not grant
 access to another person's Cloudflare resources. To reuse a team's account,
 its owner must grant you permission to manage both Workers and D1.
 
+The complete, self-contained procedure — including local validation, database
+creation and upgrade, publishing, verification, rollback, and troubleshooting —
+is in [docs/FULL_DEPLOYMENT_INSTRUCTIONS.md](docs/FULL_DEPLOYMENT_INSTRUCTIONS.md).
+The numbered steps below are the short version of the same flow.
+
 1. **Prepare and authenticate.** From the project root, install the locked
    dependencies if needed, then authorize Wrangler in your browser:
 
